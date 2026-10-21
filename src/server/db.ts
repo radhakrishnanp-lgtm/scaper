@@ -164,6 +164,17 @@ CREATE TABLE event_log (
 CREATE INDEX idx_event_log_created ON event_log(created_at DESC);
 `,
   },
+  {
+    id: 2,
+    name: "scheduled_recipes",
+    sql: `
+ALTER TABLE recipes ADD COLUMN schedule_minutes INTEGER CHECK (schedule_minutes IS NULL OR schedule_minutes >= 15);
+ALTER TABLE recipes ADD COLUMN next_run_at TEXT;
+ALTER TABLE recipes ADD COLUMN last_run_at TEXT;
+ALTER TABLE recipes ADD COLUMN last_status TEXT;
+CREATE INDEX idx_recipes_due ON recipes(schedule_minutes, next_run_at);
+`,
+  },
 ];
 
 function migrate(db: Database.Database) {

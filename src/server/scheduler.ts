@@ -6,7 +6,8 @@ import { failStaleAgentRuns } from "./repo/agent";
 import { pruneEvents } from "./repo/events";
 import { pruneNotifications } from "./repo/notifications";
 import { claimDueProducts } from "./repo/products";
-import { pruneRuns } from "./repo/scrapes";
+import { claimDueRecipes, pruneRuns } from "./repo/scrapes";
+import { runScheduledRecipe } from "./recipes/scheduled";
 import { getSettings } from "./repo/settings";
 import { claimDueWatchers, pruneSnapshots } from "./repo/watchers";
 import { checkWatcher } from "./watch/runner";
@@ -32,6 +33,11 @@ async function tick() {
     if (capacity <= 0) return;
     const watchers = claimDueWatchers(capacity);
     const products = claimDueProducts(Math.max(0, capacity - watchers.length));
+    const recipes = claimDueRecipes(Math.max(0, capacity - watchers.length - products.length));
+    for (const r of recipes) {
+      state.running++;
+      void runScheduledRecipe(r).catch((e: Error) => log.error("recipe.run_failed", { recipeId: r.id, error: e })).finally(() => state.running--);
+    }
     for (const w of watchers) {
       state.running++;
       void checkWatcher(w).finally(() => state.running--);

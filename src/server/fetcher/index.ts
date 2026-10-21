@@ -2,6 +2,7 @@ import "server-only";
 import type { FetchMode } from "@/lib/schemas";
 import { getSettings } from "../repo/settings";
 import { browserGet } from "./browser";
+import type { InspectResult } from "./inspect-script";
 import { FetchError } from "./errors";
 import { httpGet } from "./http";
 import { assertPublicUrl } from "./network-guard";
@@ -14,14 +15,14 @@ export const DEFAULT_FAST_UA = "Mozilla/5.0 (compatible; Scaper/1.0; personal pa
 
 export type FetchedPage = {
   url: string; finalUrl: string; status: number; html: string; title: string; text?: string;
-  screenshot?: string; mode: FetchMode; durationMs: number; notes: string[];
+  screenshot?: string; mode: FetchMode; durationMs: number; notes: string[]; inspect?: InspectResult;
 };
 
 /**
  * The one entry point for loading a page. Order: network guard → robots.txt →
  * wait for this host's turn → fetch → bot-check detection → backoff bookkeeping.
  */
-export async function fetchPage(url: string, mode: FetchMode, opts: { screenshot?: boolean; scroll?: boolean } = {}): Promise<FetchedPage> {
+export async function fetchPage(url: string, mode: FetchMode, opts: { screenshot?: boolean; scroll?: boolean; inspect?: boolean } = {}): Promise<FetchedPage> {
   const s = getSettings().scraping;
   const started = Date.now();
   const notes: string[] = [];
@@ -62,9 +63,9 @@ export async function fetchPage(url: string, mode: FetchMode, opts: { screenshot
     } else {
       const res = await browserGet(url, {
         userAgent: s.userAgent, timeoutMs, proxyUrl: s.proxyUrl, blockHeavy: s.blockHeavyResources,
-        screenshot: Boolean(opts.screenshot), maxConcurrency: s.maxConcurrency, allowPrivate: s.allowPrivateNetwork, scroll: opts.scroll,
+        screenshot: Boolean(opts.screenshot || opts.inspect), inspect: opts.inspect, maxConcurrency: s.maxConcurrency, allowPrivate: s.allowPrivateNetwork, scroll: opts.scroll,
       });
-      page = { finalUrl: res.url, status: res.status, html: res.html, title: res.title, text: res.text, screenshot: res.screenshot };
+      page = { finalUrl: res.url, status: res.status, html: res.html, title: res.title, text: res.text, screenshot: res.screenshot, inspect: res.inspect };
     }
 
     const wall = detectBotWall(page.html, page.status);

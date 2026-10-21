@@ -65,6 +65,8 @@ export const recipeSchema = z.object({
   url: urlSchema,
   mode: fetchModeSchema,
   extract: extractSchema,
+  // Run automatically and save a CSV each time. null = manual only.
+  scheduleMinutes: z.number().int().min(15).max(10080).nullable().default(null),
 });
 
 export const watchTargetSchema = z.discriminatedUnion("type", [

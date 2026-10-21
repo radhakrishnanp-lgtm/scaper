@@ -6,7 +6,11 @@ import { newId, now, pageSize, parseJson } from "./util";
 export type { Dataset, ScrapeResult } from "@/lib/types";
 import type { ScrapeResult } from "@/lib/types";
 
-type RecipeRow = { id: string; name: string; url: string; mode: FetchMode; extract: string; created_at: string; updated_at: string };
+type RecipeRow = {
+  id: string; name: string; url: string; mode: FetchMode; extract: string; created_at: string; updated_at: string;
+  schedule_minutes: number | null; next_run_at: string | null; last_run_at: string | null; last_status: string | null;
+};
+type RecipeInput = { name: string; url: string; mode: FetchMode; extract: ExtractSpec; scheduleMinutes?: number | null };
 export type Recipe = Omit<RecipeRow, "extract"> & { extract: ExtractSpec };
 
 const toRecipe = (r: RecipeRow): Recipe => ({ ...r, extract: parseJson<ExtractSpec>(r.extract, { type: "auto" }) });
@@ -20,18 +24,43 @@ export function getRecipe(id: string): Recipe | null {
   return r ? toRecipe(r) : null;
 }
 
-export function createRecipe(input: { name: string; url: string; mode: FetchMode; extract: ExtractSpec }): Recipe {
+const firstRun = (minutes: number | null | undefined) => (minutes ? new Date(Date.now() + 60_000).toISOString() : null);
+
+export function createRecipe(input: RecipeInput): Recipe {
   const id = newId();
   const t = now();
-  db().prepare("INSERT INTO recipes (id, name, url, mode, extract, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(id, input.name, input.url, input.mode, JSON.stringify(input.extract), t, t);
+  db().prepare(
+    "INSERT INTO recipes (id, name, url, mode, extract, schedule_minutes, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, input.name, input.url, input.mode, JSON.stringify(input.extract), input.scheduleMinutes ?? null, firstRun(input.scheduleMinutes), t, t);
   return getRecipe(id)!;
 }
 
-export function updateRecipe(id: string, input: { name: string; url: string; mode: FetchMode; extract: ExtractSpec }) {
-  const res = db().prepare("UPDATE recipes SET name = ?, url = ?, mode = ?, extract = ?, updated_at = ? WHERE id = ?")
-    .run(input.name, input.url, input.mode, JSON.stringify(input.extract), now(), id);
-  return res.changes ? getRecipe(id) : null;
+export function updateRecipe(id: string, input: RecipeInput) {
+  const before = getRecipe(id);
+  if (!before) return null;
+  const schedule = input.scheduleMinutes ?? null;
+  // Keep the existing slot unless the schedule itself changed.
+  const next = schedule === before.schedule_minutes ? before.next_run_at : firstRun(schedule);
+  db().prepare("UPDATE recipes SET name = ?, url = ?, mode = ?, extract = ?, schedule_minutes = ?, next_run_at = ?, updated_at = ? WHERE id = ?")
+    .run(input.name, input.url, input.mode, JSON.stringify(input.extract), schedule, next, now(), id);
+  return getRecipe(id);
+}
+
+/** Scheduler: claims recipes whose run is due by pushing their slot forward. */
+export function claimDueRecipes(limit: number): Recipe[] {
+  const t = now();
+  return db().transaction(() => {
+    const rows = db().prepare(
+      "SELECT * FROM recipes WHERE schedule_minutes IS NOT NULL AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT ?",
+    ).all(t, limit) as RecipeRow[];
+    const stmt = db().prepare("UPDATE recipes SET next_run_at = ? WHERE id = ?");
+    for (const r of rows) stmt.run(new Date(Date.now() + r.schedule_minutes! * 60_000).toISOString(), r.id);
+    return rows.map(toRecipe);
+  })();
+}
+
+export function recordRecipeRun(id: string, status: string) {
+  db().prepare("UPDATE recipes SET last_run_at = ?, last_status = ? WHERE id = ?").run(now(), status, id);
 }
 
 export function deleteRecipe(id: string) {

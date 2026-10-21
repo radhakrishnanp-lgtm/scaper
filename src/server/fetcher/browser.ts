@@ -5,6 +5,7 @@ import { env } from "../env";
 import { log } from "../log";
 import { FetchError } from "./errors";
 import { isPrivateAddress } from "./network-guard";
+import { collectBoxes, type InspectResult } from "./inspect-script";
 
 type Pool = { browser: Browser | null; launching: Promise<Browser> | null; proxyKey: string; active: number; waiters: (() => void)[] };
 const g = globalThis as unknown as { __scaperBrowser?: Pool };
@@ -75,7 +76,9 @@ function release() {
   }
 }
 
-export type BrowserPage = { status: number; url: string; html: string; title: string; screenshot?: string; text: string };
+export type BrowserPage = { status: number; url: string; html: string; title: string; screenshot?: string; text: string; inspect?: InspectResult };
+
+const INSPECT_MAX_HEIGHT = 6000;
 
 /**
  * Renders a page in headless Chromium. Low footprint by default: images, fonts
@@ -85,7 +88,7 @@ export async function browserGet(
   url: string,
   opts: {
     userAgent: string; timeoutMs: number; proxyUrl: string; blockHeavy: boolean; screenshot: boolean;
-    maxConcurrency: number; allowPrivate: boolean; scroll?: boolean;
+    maxConcurrency: number; allowPrivate: boolean; scroll?: boolean; inspect?: boolean;
   },
 ): Promise<BrowserPage> {
   await acquire(opts.maxConcurrency);
@@ -129,6 +132,13 @@ export async function browserGet(
         page.title(),
         page.evaluate(() => document.body?.innerText ?? ""),
       ]);
+      if (opts.inspect) {
+        // Element picker: boxes in page coordinates plus a matching full-page screenshot (capped height).
+        await page.evaluate(() => window.scrollTo(0, 0));
+        const inspect = await page.evaluate(collectBoxes, { maxBoxes: 2500, maxHeight: INSPECT_MAX_HEIGHT });
+        const shot = await page.screenshot({ type: "jpeg", quality: 55, fullPage: true, clip: { x: 0, y: 0, width: Math.min(inspect.width, 1366), height: Math.max(1, inspect.height) } });
+        return { status: response?.status() ?? 200, url: page.url(), html, title, text, screenshot: shot.toString("base64"), inspect };
+      }
       const screenshot = opts.screenshot
         ? (await page.screenshot({ type: "jpeg", quality: 60, fullPage: false })).toString("base64")
         : undefined;

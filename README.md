@@ -4,7 +4,7 @@ Scaper is a local-first web scraper, website watcher and price tracker with an A
 
 **What it does**
 
-- **Scrape any page.** Paste a URL and choose Auto (finds product lists, tables, structured data, links and images), CSS selectors (exact fields, one row per item) or AI (describe what you want). Export to CSV or JSON. Save scrapes as reusable recipes.
+- **Scrape any page.** Paste a URL and choose Auto (finds product lists, tables, structured data, links and images), CSS selectors (exact fields, one row per item) or AI (describe what you want). Export to CSV or JSON. Not sure of the selectors? Click **Pick on page**, then click the elements on a screenshot of the page. Save scrapes as reusable recipes, and set a recipe to run automatically (hourly to weekly); each run saves a CSV to `data/exports/`.
 - **Watch websites.** Check a page, a part of a page or a price on a schedule. Alert on any change, text appearing or disappearing, a value going above or below a number, a % drop, or "the AI says this change matters". Ignore noisy lines. See a line-by-line diff of every change.
 - **Alerts and triggers.** In-app inbox, desktop notifications, a webhook (n8n, Zapier, Make, your own server) and Telegram.
 - **Deals and price history.** Track Amazon or any shop's product pages. Scaper builds its own price history (Keepa-style) and gives a deal score that compares today's price with the item's usual price, and flags inflated "M.R.P." discounts. Scan a listing page (for example an Amazon search) for the highest discounts, optionally ranked by your fast AI model.

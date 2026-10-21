@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { BookMarked, Globe, Play, Plus, Save, Sparkles, Trash2, Wand2, Zap, ListTree } from "lucide-react";
+import { BookMarked, Globe, MousePointerClick, Play, Plus, Save, Sparkles, Trash2, Wand2, Zap, ListTree } from "lucide-react";
 import { ConfirmDialog, Dialog } from "@/components/dialog";
+import { ElementPicker, type PickAction } from "@/components/element-picker";
 import { ScrapeResultView, type RunView } from "@/components/scrape-result";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, CardHeader, Field, Input, PageHeader, Segmented, Select, Switch, Textarea } from "@/components/ui";
@@ -13,7 +14,7 @@ import { hostOf, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
 type ExtractType = ExtractSpec["type"];
-type Recipe = { id: string; name: string; url: string; mode: FetchMode; extract: ExtractSpec; updated_at: string };
+type Recipe = { id: string; name: string; url: string; mode: FetchMode; extract: ExtractSpec; updated_at: string; schedule_minutes: number | null; next_run_at: string | null; last_status: string | null };
 
 const ATTRS = ["text", "href", "src", "html", "title", "alt", "content", "value", "data-price"];
 const emptyField = (): FieldSpec => ({ name: "", selector: "", attr: "text", multiple: false });
@@ -38,7 +39,26 @@ function ScrapePage() {
   const [run, setRun] = useState<RunView | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [recipeName, setRecipeName] = useState("");
+  const [schedule, setSchedule] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<Recipe | null>(null);
+  const [picking, setPicking] = useState(false);
+
+  const onPick = (a: PickAction) => {
+    if (a.kind === "item") {
+      setItemSelector(a.selector);
+      toast.info("Item selector set", "Now pick the title, price and other parts inside one item.");
+      return;
+    }
+    setFields((fs) => {
+      const names = new Set(fs.map((f) => f.name));
+      let name = a.name;
+      for (let n = 2; names.has(name); n++) name = `${a.name}_${n}`;
+      const next = { name, selector: a.selector, attr: a.attr, multiple: a.multiple };
+      // Replace the untouched starter field instead of keeping it around.
+      const starter = fs.length === 1 && fs[0]!.name === "title" && fs[0]!.selector === "h1";
+      return starter ? [next] : [...fs, next];
+    });
+  };
 
   const extract = (): ExtractSpec =>
     type === "auto" ? { type } : type === "selectors" ? { type, itemSelector, fields } : { type, instruction, useFastModel: fastModel };
@@ -46,6 +66,7 @@ function ScrapePage() {
   const loadRecipe = (r: Recipe) => {
     setRecipeId(r.id);
     setRecipeName(r.name);
+    setSchedule(r.schedule_minutes);
     setUrl(r.url);
     setMode(r.mode);
     setType(r.extract.type);
@@ -79,7 +100,7 @@ function ScrapePage() {
 
   const saveRecipe = async () => {
     try {
-      const body = { name: recipeName, url, mode, extract: extract() };
+      const body = { name: recipeName, url, mode, extract: extract(), scheduleMinutes: schedule };
       const res = recipeId
         ? await api<{ recipe: Recipe }>(`/api/recipes/${recipeId}`, { method: "PUT", body })
         : await api<{ recipe: Recipe }>("/api/recipes", { body });
@@ -151,7 +172,10 @@ function ScrapePage() {
                       </div>
                     ))}
                     {errors["extract.fields"] && <p className="text-xs text-danger">{errors["extract.fields"]}</p>}
-                    <Button type="button" size="sm" variant="secondary" icon={<Plus className="size-4" />} onClick={() => setFields((fs) => [...fs, emptyField()])} disabled={fields.length >= 30}>Add field</Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" variant="secondary" icon={<Plus className="size-4" />} onClick={() => setFields((fs) => [...fs, emptyField()])} disabled={fields.length >= 30}>Add field</Button>
+                      <Button type="button" size="sm" variant="secondary" icon={<MousePointerClick className="size-4" />} onClick={() => setPicking(true)} disabled={!url}>Pick on page</Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -172,7 +196,7 @@ function ScrapePage() {
                 <Button type="button" variant="secondary" icon={<Save className="size-4" />} onClick={() => { if (!recipeName) setRecipeName(hostOf(url)); setSaveOpen(true); }} disabled={!url}>
                   {recipeId ? "Update recipe" : "Save as recipe"}
                 </Button>
-                {recipeId && <Button type="button" variant="ghost" onClick={() => { setRecipeId(null); setRecipeName(""); }}>Start new</Button>}
+                {recipeId && <Button type="button" variant="ghost" onClick={() => { setRecipeId(null); setRecipeName(""); setSchedule(null); }}>Start new</Button>}
               </div>
             </form>
           </Card>
@@ -191,7 +215,7 @@ function ScrapePage() {
                 <li key={r.id} className="flex items-center gap-2 px-4 py-3">
                   <button className="min-w-0 flex-1 text-left" onClick={() => loadRecipe(r)}>
                     <p className="truncate text-sm font-medium hover:text-accent">{r.name}</p>
-                    <p className="truncate text-xs text-muted">{hostOf(r.url)} · <Badge className="ml-0.5">{r.extract.type}</Badge> · {timeAgo(r.updated_at)}</p>
+                    <p className="truncate text-xs text-muted">{hostOf(r.url)} · <Badge className="ml-0.5">{r.extract.type}</Badge> · {r.schedule_minutes ? <>auto, next {timeAgo(r.next_run_at)}{r.last_status && r.last_status !== "ok" && <span className="text-warning"> · last {r.last_status}</span>}</> : timeAgo(r.updated_at)}</p>
                   </button>
                   <Button size="sm" variant="ghost" aria-label={`Delete ${r.name}`} onClick={() => setDeleting(r)}><Trash2 className="size-4" /></Button>
                 </li>
@@ -203,8 +227,24 @@ function ScrapePage() {
 
       <Dialog open={saveOpen} onClose={() => setSaveOpen(false)} title={recipeId ? "Update recipe" : "Save recipe"}
         footer={<><Button variant="secondary" onClick={() => setSaveOpen(false)}>Cancel</Button><Button onClick={saveRecipe} disabled={!recipeName.trim()}>Save</Button></>}>
-        <Field label="Recipe name" error={errors.name}>{(p) => <Input {...p} autoFocus value={recipeName} onChange={(e) => setRecipeName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveRecipe(); }} />}</Field>
+        <div className="space-y-4">
+          <Field label="Recipe name" error={errors.name}>{(p) => <Input {...p} autoFocus value={recipeName} onChange={(e) => setRecipeName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveRecipe(); }} />}</Field>
+          <Field label="Run automatically" hint="Each run is saved in History and as a CSV file in data/exports/." error={errors.scheduleMinutes}>
+            {(p) => (
+              <Select {...p} value={schedule ?? ""} onChange={(e) => setSchedule(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Off (run by hand)</option>
+                <option value={60}>Every hour</option>
+                <option value={360}>Every 6 hours</option>
+                <option value={720}>Every 12 hours</option>
+                <option value={1440}>Daily</option>
+                <option value={10080}>Weekly</option>
+              </Select>
+            )}
+          </Field>
+        </div>
       </Dialog>
+
+      <ElementPicker open={picking} url={url} onClose={() => setPicking(false)} onPick={onPick} itemSelector={itemSelector} />
 
       <ConfirmDialog open={Boolean(deleting)} onCancel={() => setDeleting(null)} title="Delete recipe?"
         body={<>“{deleting?.name}” will be removed. Past runs stay in History.</>}

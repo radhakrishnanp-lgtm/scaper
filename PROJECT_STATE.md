@@ -32,7 +32,7 @@ Personal "Launch" quality for a single user on their own machine; VPS-ready with
 | Auth | ✅ optional password (signed cookie); ➖ multi-user not needed yet |
 | Hosting | ⏳ VPS steps documented in RUNBOOK |
 | Compute / jobs | ✅ in-process scheduler with leases and backoff |
-| CI/CD | ⏳ GitHub Actions once a repo is connected (`npm run check`) |
+| CI/CD | ✅ `.github/workflows/ci.yml` (typecheck, lint, tests, build, audit); runs once pushed to GitHub |
 | Security | ✅ see docs/SECURITY.md; ⏳ nonce-based CSP before public hosting |
 | Rate limiting | ✅ per endpoint + per host + AI daily cap |
 | Caching | ➖ local app; static assets cached by Next.js |
@@ -41,15 +41,14 @@ Personal "Launch" quality for a single user on their own machine; VPS-ready with
 | Recovery | ✅ backup/restore documented; JSON export |
 
 ## Tests
-`npm test`: 58 tests (parsers, diff, rules, deal score, robots.txt, bot-check stop, SSRF guard, charset decoding, session tokens, CSV, integration with a local fixture site in fast and browser mode, agent tool loop against a mock OpenAI-compatible server, AI daily cap). A full UI click-through was run with Playwright.
+`npm test`: 64 tests (picker selectors, scheduled recipes, page inspect, parsers, diff, rules, deal score, robots.txt, bot-check stop, SSRF guard, charset decoding, session tokens, CSV, integration with a local fixture site in fast and browser mode, agent tool loop against a mock OpenAI-compatible server, AI daily cap). A full UI click-through was run with Playwright.
 
 ## Known issues / not verified
 - Not tested against live Amazon or other public sites from the build environment (its network blocks outside sites). Amazon selectors follow Amazon's current public markup and may need updates when Amazon changes its layout.
 - Desktop notifications appear only while a Scaper tab is open.
 
 ## Next steps (in order)
-1. Connect a GitHub repo, push, add CI (`npm run check`).
-2. Visual element picker on a screenshot to build selectors by clicking.
-3. Scheduled recipe runs with CSV/Google Sheets export.
-4. Amazon Creators API integration (needs an Associates account).
-5. Nonce-based CSP, then VPS deploy behind Caddy.
+1. Connect a GitHub repo and push (CI file is ready).
+2. Google Sheets export for scheduled recipes.
+3. Amazon Creators API integration (needs an Associates account).
+4. Nonce-based CSP, then VPS deploy behind Caddy.

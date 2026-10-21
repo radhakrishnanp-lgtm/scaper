@@ -37,4 +37,5 @@ Keep "Allow private network" off on a VPS.
 | robots.txt refusal | The site asked bots not to load that page. Only turn the check off for sites you own or have permission for |
 | Watcher alerts on every check | Watch a selector instead of the whole page, or add noisy phrases to "Ignore lines containing" |
 | Agent: "model may not support tool calling" | Pick a tool-capable model (recent GPT, Llama 3.1+, Qwen 2.5+, Mistral) |
+| The dev page keeps reloading or shows odd build errors | Stop `npm run dev`, delete the `.next` folder, start again. This happens if `npm run build` ran while dev was running |
 | No desktop notifications | Alerts page → Turn on, and keep one Scaper tab open |

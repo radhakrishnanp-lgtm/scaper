@@ -9,7 +9,8 @@ All endpoints are JSON, same-origin only. Writes (POST/PUT/PATCH/DELETE) must se
 | GET/PUT `/api/settings` | Read (secrets masked) / update settings | – |
 | POST `/api/settings/test` | Test `ai`, `ai_fast`, `webhook` or `telegram` | 10/min |
 | POST `/api/scrape` | Run a scrape `{url, mode, extract, screenshot?, recipeId?}` | 30/min, burst 10 |
-| GET/POST `/api/recipes` · GET/PUT/DELETE `/api/recipes/:id` · POST `/api/recipes/:id/run` | Recipes | run: shares scrape limit |
+| GET/POST `/api/recipes` · GET/PUT/DELETE `/api/recipes/:id` · POST `/api/recipes/:id/run` | Recipes (`scheduleMinutes`: null or ≥ 15 runs it automatically and saves a CSV to `data/exports/<recipe>/`) | run: shares scrape limit |
+| POST `/api/inspect` | Screenshot plus element boxes for the visual picker `{url}` | 10/min |
 | GET `/api/runs?limit&before&recipeId` · GET/DELETE `/api/runs/:id` | Scrape history (cursor pagination) | – |
 | GET `/api/runs/:id/export?format=csv|json&dataset=N` | Download a dataset | – |
 | GET/POST `/api/watchers` · GET/PUT/PATCH/DELETE `/api/watchers/:id` | Watchers (PATCH = pause/resume) | – |

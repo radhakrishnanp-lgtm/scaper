@@ -1,8 +1,12 @@
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startFixtureServer } from "./fixture-server";
 
 process.env.SCAPER_SCHEDULER = "off";
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "scaper-test-"));
+process.env.SCAPER_DATA_DIR = tmp;
 
 const { openDatabase, setDatabaseForTests } = await import("@/server/db");
 setDatabaseForTests(openDatabase(":memory:"));
@@ -13,6 +17,10 @@ const { checkWatcher } = await import("@/server/watch/runner");
 const { listNotifications } = await import("@/server/repo/notifications");
 const { trackProduct } = await import("@/server/deals/tracker");
 const { closeBrowser, browserInstalled } = await import("@/server/fetcher/browser");
+const { createRecipe, claimDueRecipes, getRecipe } = await import("@/server/repo/scrapes");
+const { runScheduledRecipe } = await import("@/server/recipes/scheduled");
+const { fetchPage } = await import("@/server/fetcher");
+const { db } = await import("@/server/db");
 
 let site: Awaited<ReturnType<typeof startFixtureServer>>;
 
@@ -90,6 +98,25 @@ describe("watcher end to end", () => {
   }, 30_000);
 });
 
+describe("scheduled recipes", () => {
+  it("claims due recipes once and writes a CSV per run", async () => {
+    const r = createRecipe({
+      name: "Fixture cards", url: `${site.base}/listing`, mode: "fast", scheduleMinutes: 60,
+      extract: { type: "selectors", itemSelector: ".card", fields: [{ name: "name", selector: "h2", attr: "text", multiple: false }] },
+    });
+    expect(claimDueRecipes(5)).toHaveLength(0); // first run is a minute out
+    db().prepare("UPDATE recipes SET next_run_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), r.id);
+    const due = claimDueRecipes(5);
+    expect(due.map((x) => x.id)).toEqual([r.id]);
+    expect(claimDueRecipes(5)).toHaveLength(0); // lease moved forward
+    const { run, file } = await runScheduledRecipe(due[0]!);
+    expect(run.row_count).toBe(5);
+    expect(file && fs.readFileSync(file, "utf8")).toContain("Bolt Sport Earbuds");
+    expect(file?.startsWith(path.join(tmp, "exports", "fixture-cards"))).toBe(true);
+    expect(getRecipe(r.id)?.last_status).toBe("ok");
+  }, 30_000);
+});
+
 const hasBrowser = browserInstalled() || fs.existsSync(process.env.PLAYWRIGHT_EXECUTABLE_PATH ?? "/nonexistent");
 
 describe.skipIf(!hasBrowser)("browser mode", () => {
@@ -99,6 +126,18 @@ describe.skipIf(!hasBrowser)("browser mode", () => {
     const browser = await runScrape({ url: `${site.base}/js`, mode: "browser", extract: { type: "selectors", itemSelector: "li.row", fields: [{ name: "t", selector: "a", attr: "text", multiple: false }, { name: "price", selector: ".p", attr: "text", multiple: false }] } });
     expect(browser.status).toBe("ok");
     expect(browser.result?.datasets[0]?.rows[4]).toMatchObject({ t: "Rendered item number 5", price_value: 500 });
+  }, 60_000);
+
+  it("inspects a page for the element picker", async () => {
+    const page = await fetchPage(`${site.base}/listing`, "browser", { inspect: true });
+    expect(page.screenshot?.length).toBeGreaterThan(1000);
+    const box = page.inspect!.boxes.find((b) => b.text === "Bolt Sport Earbuds" && b.tag === "h2")!;
+    expect(box).toBeTruthy();
+    expect(box.similar).toBe(5);
+    expect(box.general).toContain("h2.name");
+    const $ = (await import("cheerio")).load(page.html);
+    expect($(box.selector).text()).toBe("Bolt Sport Earbuds");
+    expect($(box.general).length).toBe(5);
   }, 60_000);
 
   it("tracks a product and records the first price point", async () => {

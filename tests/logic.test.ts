@@ -133,3 +133,14 @@ describe("schemas", () => {
     expect(bad.success).toBe(false);
   });
 });
+
+describe("picker relative selectors", async () => {
+  const { relativeSelector } = await import("@/components/element-picker");
+  it("strips the item part", () => {
+    expect(relativeSelector("#results > div.card.item > a > h2.name", "#results > div.card.item")).toBe("a > h2.name");
+    expect(relativeSelector("#results > div.card.item > span.price", "div.card.item")).toBe("span.price");
+  });
+  it("falls back to the last two parts", () => {
+    expect(relativeSelector("main > section > ul.list > li > b.p", ".row")).toBe("li > b.p");
+  });
+});
