@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens. Personality: calm, precise instrument panel. Warm-neutral surfaces, one teal accent, amber for "watch out". */
+:root {
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --surface-2: #f0efeb;
+  --border: #e3e1db;
+  --text: #1b1d1f;
+  --muted: #676b70;
+  --accent: #0f766e;
+  --accent-hover: #115e59;
+  --accent-soft: #ccfbf1;
+  --accent-fg: #ffffff;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --warning: #b45309;
+  --warning-soft: #fef3c7;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+  --ring: #14b8a6;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-lg: 0 12px 32px -8px rgb(16 24 40 / 0.18);
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #0f1113;
+  --surface: #16191c;
+  --surface-2: #1d2125;
+  --border: #2a2f34;
+  --text: #e9eaec;
+  --muted: #9aa0a6;
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: #134e4a;
+  --accent-fg: #042f2e;
+  --success: #4ade80;
+  --success-soft: #14532d;
+  --warning: #fbbf24;
+  --warning-soft: #451a03;
+  --danger: #f87171;
+  --danger-soft: #450a0a;
+  --ring: #2dd4bf;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-ring: var(--ring);
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-lg);
+  --radius-card: 14px;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+html, body { background: var(--bg); color: var(--text); }
+body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+::selection { background: var(--accent-soft); }
+
+dialog::backdrop { background: rgb(0 0 0 / 0.45); backdrop-filter: blur(2px); }
+
+@keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--border) 50%, var(--surface-2) 100%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.toast-in { animation: toast-in 160ms ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
