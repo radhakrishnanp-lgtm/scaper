@@ -31,6 +31,8 @@ export type FetchOptions = {
   signal?: AbortSignal; accept?: string;
   /** Uptime checks: a plain 503 means "down", not "slow down". Bot checks still stop the request. */
   uptime?: boolean;
+  /** Browser mode: take a screenshot for failure reports (returned as `screenshot`, or attached to the error). */
+  evidence?: boolean;
 };
 
 /**
@@ -99,7 +101,7 @@ export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions
       } else {
         const res = await browserGet(url, {
           userAgent: browserUa, timeoutMs, proxyUrl: s.proxyUrl, blockHeavy: s.blockHeavyResources,
-          screenshot: Boolean(opts.screenshot || opts.inspect), inspect: opts.inspect, maxConcurrency: s.maxConcurrency, allowPrivate: s.allowPrivateNetwork,
+          screenshot: Boolean(opts.screenshot || opts.inspect || opts.evidence), evidence: opts.evidence, inspect: opts.inspect, maxConcurrency: s.maxConcurrency, allowPrivate: s.allowPrivateNetwork,
           scroll: opts.scroll, steps: opts.steps, pagination: opts.pagination, headers, cookies: rule?.cookies, capture: opts.capture, signal: opts.signal,
         });
         notes.push(...res.stepLog);
@@ -108,17 +110,18 @@ export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions
       status = page.status;
 
       const wall = detectBotWall(page.html, page.status);
+      const withEvidence = (err: FetchError) => { if (opts.evidence && page.screenshot) err.evidence = page.screenshot; return err; };
       if (wall || (page.status === 503 && !opts.uptime)) {
         penalize(host, parseRetryAfter(retryAfter));
-        throw new FetchError(
+        throw withEvidence(new FetchError(
           "blocked",
           `${wall ?? "The site is temporarily refusing requests (503)"}. Scaper does not bypass bot checks, so it paused requests to ${host} and will back off. Try a longer interval, check the page in your own browser, or use the site's official API.`,
           page.status,
-        );
+        ));
       }
       if (page.status >= 400) {
         if (page.status === 403) penalize(host);
-        throw new FetchError("http", `The site answered with HTTP ${page.status}.`, page.status);
+        throw withEvidence(new FetchError("http", `The site answered with HTTP ${page.status}.`, page.status));
       }
       reward(host);
       recordHostRequest(host, { ok: true, blocked: false, ms: Date.now() - reqStarted, bytes: page.html.length, status });

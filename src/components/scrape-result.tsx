@@ -7,6 +7,7 @@ import type { ScrapeRun } from "@/server/repo/scrapes";
 import type { Field } from "@/lib/schemas";
 import { duration, hostOf, plural, timeAgo } from "@/lib/format";
 import { DataTable } from "./data-table";
+import { CheckResults, DiagnosisCard, ScoreBadge, diagnosisHref } from "./ops-bits";
 import { RunStatusBadge } from "./status";
 import { Badge, Button, Callout, Card, EmptyState, KeyValue, Tabs } from "./ui";
 
@@ -22,6 +23,8 @@ export function ScrapeResultView({ run, onUseSelectors, actions }: {
     const i = r?.datasets.findIndex((d) => !["Links", "Images", "Headings"].includes(d.name)) ?? 0;
     return Math.max(0, i);
   });
+  const reportHref = diagnosisHref(run.recipe_id, hostOf(run.url));
+  if (!r && run.diagnosis) return <DiagnosisCard d={run.diagnosis} actionHref={reportHref} />;
   if (!r) {
     const blocked = run.status === "blocked";
     return (
@@ -44,17 +47,22 @@ export function ScrapeResultView({ run, onUseSelectors, actions }: {
     { value: "data", label: "Data", count: ds?.rows.length ?? 0 },
     { value: "changes", label: "New & removed", count: r.monitor ? r.monitor.added + r.monitor.removed : null, hidden: !r.monitor },
     { value: "pages", label: "Pages", count: r.pages?.length ?? null, hidden: !r.pages?.length },
+    { value: "checks", label: "Data checks", count: r.validation ? r.validation.counts.fail + r.validation.counts.warn || null : null, hidden: !r.validation?.results.length },
     { value: "quality", label: "Quality", count: r.quality?.issues.length || null, hidden: !r.quality },
     { value: "details", label: "Details" },
   ];
 
   return (
+    <div className="space-y-4">
+    {run.diagnosis && <DiagnosisCard d={run.diagnosis} actionHref={reportHref} />}
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="truncate font-semibold">{r.title || hostOf(run.url)}</h2>
             <RunStatusBadge status={run.status} />
+            {r.validation?.score !== null && r.validation?.score !== undefined && <ScoreBadge score={r.validation.score} status={r.validation.status} />}
+            {run.version ? <Badge>Setup v{run.version}</Badge> : null}
           </div>
           <a href={r.finalUrl} target="_blank" rel="noreferrer noopener" className="block truncate text-sm text-accent hover:underline">{r.finalUrl}</a>
           <p className="mt-1 text-xs text-muted">
@@ -103,6 +111,7 @@ export function ScrapeResultView({ run, onUseSelectors, actions }: {
             <DataTable
               key={`${run.id}-${tab}`}
               dataset={ds}
+              viewScope={run.recipe_id ? `task:${run.recipe_id}:${ds.name.replace(/[^\w.-]+/g, "_").slice(0, 60)}` : undefined}
               fill={tab === 0 || ds === r.datasets[0] ? r.quality?.fill : undefined}
               exportHref={(f) => `/api/runs/${run.id}/export?format=${f}&dataset=${tab}`}
               fileName={`${hostOf(run.url)}-${ds.name}`.toLowerCase().replace(/[^a-z0-9]+/g, "-")}
@@ -147,6 +156,13 @@ export function ScrapeResultView({ run, onUseSelectors, actions }: {
         </div>
       )}
 
+      {view === "checks" && r.validation && (
+        <div className="space-y-3 p-5">
+          <p className="text-sm text-muted">Data score <span className="font-semibold text-text tabular-nums">{r.validation.score ?? "—"}</span> · {r.validation.counts.pass} passed, {r.validation.counts.warn} warnings, {r.validation.counts.fail} failed{run.recipe_id ? <> · <Link prefetch={false} href={`/tasks/${run.recipe_id}?view=checks`} className="text-accent hover:underline">Edit checks</Link></> : null}</p>
+          <CheckResults results={r.validation.results} />
+        </div>
+      )}
+
       {view === "quality" && r.quality && (
         <div className="space-y-4 p-5">
           {r.quality.issues.length ? (
@@ -183,5 +199,6 @@ export function ScrapeResultView({ run, onUseSelectors, actions }: {
         </div>
       )}
     </Card>
+    </div>
   );
 }

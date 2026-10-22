@@ -27,7 +27,7 @@ export const PUT = handler(async (req) => {
     const ok = /^https?:\/\/[^\s]+$/i.test(patch.scraping.proxyUrl) || MASKED.test(patch.scraping.proxyUrl);
     if (!ok) throw new HttpError(400, "validation", "Please fix the highlighted fields.", { "scraping.proxyUrl": "Use the form http://user:pass@host:port" });
   }
-  const saved = saveSettings({ ai: dropMasked(patch.ai), scraping: dropMasked(patch.scraping), notifications: dropMasked(patch.notifications), data: patch.data });
+  const saved = saveSettings({ ai: dropMasked(patch.ai), scraping: dropMasked(patch.scraping), notifications: dropMasked(patch.notifications), data: patch.data, integrations: patch.integrations });
   audit("settings.updated", { sections: Object.keys(patch) });
   return { settings: publicSettings(saved) };
 });

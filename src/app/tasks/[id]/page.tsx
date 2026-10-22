@@ -1,72 +1,31 @@
 "use client";
 
-import { Suspense, use, useEffect, useMemo, useState } from "react";
+import { Suspense, use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarClock, Code2, Copy, Database, Eraser, History, MoreHorizontal, Pause, Pencil, Play, Sparkles, Trash2, Webhook } from "lucide-react";
-import type { Cell } from "@/lib/types";
+import { Activity, CalendarClock, Code2, Copy, Database, Eraser, GitBranch, History, MoreHorizontal, Pause, Pencil, Play, ShieldCheck, Sparkles, Trash2, Webhook, Wrench } from "lucide-react";
 import type { Task } from "@/server/repo/scrapes";
 import type { Job } from "@/server/repo/jobs";
-import { BarChart } from "@/components/charts";
-import { CopyButton, DataTable } from "@/components/data-table";
-import { ConfirmDialog, Dialog } from "@/components/dialog";
+import { CopyButton } from "@/components/data-table";
+import { ConfirmDialog } from "@/components/dialog";
 import { useLive } from "@/components/live";
+import { ChecksTab, diagnosisActions, HealDialog, HealthTab, PendingRepair, RepairsTab, VersionsTab } from "@/components/task-ops";
+import type { HealProposal } from "@/server/repo/heal";
 import { Menu } from "@/components/menu";
 import { ScrapeResultView, type RunView } from "@/components/scrape-result";
 import { JobStatusBadge, RunStatusBadge } from "@/components/status";
 import { describeTask, isPaused, isScheduled } from "@/components/task-bits";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Callout, Card, CardHeader, EmptyState, ErrorNote, IconButton, KeyValue, LoadingRows, PageHeader, Progress, Stat, Tabs } from "@/components/ui";
+import { Badge, Button, Callout, Card, EmptyState, ErrorNote, IconButton, KeyValue, LoadingRows, PageHeader, Progress, Stat, Tabs } from "@/components/ui";
+import { DiagnosisCard, ScoreBadge } from "@/components/ops-bits";
 import { api, errorText } from "@/lib/api-client";
 import { dateTime, duration, hostOf, plural, scheduleText, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
 
-type Detail = { task: Task; trend: { created_at: string; row_count: number; status: string; duration_ms: number }[]; jobs: Job[]; seen: number; nextRuns: string[] };
-type View = "data" | "runs" | "jobs" | "setup" | "api";
-type Heal = { url: string; before: number; after: number; extract: Task["extract"]; sample: Record<string, Cell>[]; note: string | null; unchanged: string[] };
-
-/** "Fix with AI": your model proposes new selectors for the same columns, tested on the live page; you decide. */
-function HealDialog({ id, onClose, onApplied }: { id: string; onClose: () => void; onApplied: () => void }) {
-  const toast = useToast();
-  const [res, setRes] = useState<Heal | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(true);
-  const [applying, setApplying] = useState(false);
-  useEffect(() => {
-    let stop = false;
-    api<Heal>(`/api/tasks/${id}/heal`, { method: "POST" }).then((r) => { if (!stop) setRes(r); }, (e) => { if (!stop) setErr(errorText(e)); }).finally(() => { if (!stop) setBusy(false); });
-    return () => { stop = true; };
-  }, [id]);
-  const apply = async () => {
-    if (!res) return;
-    setApplying(true);
-    try { await api(`/api/tasks/${id}/heal`, { body: { apply: res.extract } }); toast.success("New selectors saved", "The next run uses them."); onApplied(); }
-    catch (e) { toast.error("Could not save", errorText(e)); } finally { setApplying(false); }
-  };
-  return (
-    <Dialog open onClose={onClose} xl title="Fix with AI" description="Your model looks at the page as it is today and proposes selectors for the same columns. Transforms and other settings stay."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button>{res && res.after > 0 && <Button icon={<Sparkles className="size-4" />} loading={applying} onClick={apply}>Use the new selectors</Button>}</>}>
-      {busy ? <div className="space-y-2"><p className="text-sm text-muted">Loading the page and asking your model. This takes 10 to 40 seconds.</p><LoadingRows rows={3} /></div>
-        : err ? <Callout tone="danger" title="Could not fix">{err}</Callout>
-        : res && (
-          <div className="space-y-4">
-            <Callout tone={res.after > res.before ? "success" : res.after ? "neutral" : "warning"} title={`Old selectors: ${plural(res.before, "row")} · New: ${plural(res.after, "row")}`}>
-              {res.note}{res.unchanged.length ? ` Unchanged: ${res.unchanged.join(", ")}.` : ""} Tested on <a className="text-accent hover:underline" href={res.url} target="_blank" rel="noreferrer">{hostOf(res.url)}</a>.
-            </Callout>
-            {res.extract.type === "selectors" && (
-              <div className="rounded-lg bg-surface-2/60 p-3 font-mono text-xs">
-                {res.extract.itemSelector && <p><span className="text-muted">item:</span> {res.extract.itemSelector}</p>}
-                {res.extract.fields.map((f) => <p key={f.name}><span className="text-muted">{f.name}:</span> {f.selector}{f.attr !== "text" ? ` @${f.attr}` : ""}</p>)}
-              </div>
-            )}
-            {res.sample.length > 0 && <div className="overflow-hidden rounded-xl border border-border"><DataTable dataset={{ name: "Sample", columns: Object.keys(res.sample[0]!), rows: res.sample }} compact /></div>}
-          </div>
-        )}
-    </Dialog>
-  );
-}
-
+type Detail = { task: Task; trend: { created_at: string; row_count: number; status: string; duration_ms: number }[]; jobs: Job[]; seen: number; nextRuns: string[]; pendingRepair: HealProposal | null; openIssues: number; versions: number };
+type View = "data" | "health" | "checks" | "runs" | "jobs" | "versions" | "repairs" | "setup" | "api";
+const HIDDEN_SETS = ["Links", "Images", "Headings"];
 function TaskDetail({ id }: { id: string }) {
   const router = useRouter();
   const toast = useToast();
@@ -78,20 +37,20 @@ function TaskDetail({ id }: { id: string }) {
   const [view, setView] = useQueryState<View>("view", "data");
   const [confirm, setConfirm] = useState<"delete" | "seen" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [heal, setHeal] = useState(false);
+  const [fix, setFix] = useQueryState<string>("fix", "");
+  const heal = fix === "1";
+  const setHeal = (v: boolean) => setFix(v ? "1" : "");
 
   const running = live.active.find((j) => j.ref_id === id && (j.status === "running" || j.status === "queued"));
-  const trend = useMemo(() => (data?.trend ?? []).map((r) => ({
-    label: new Date(r.created_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
-    values: { ok: r.status === "ok" ? r.row_count : 0, partial: r.status === "partial" ? r.row_count : 0 },
-  })), [data]);
 
   if (error) return <ErrorNote message={error} onRetry={reload} />;
   if (loading || !data) return <Card><LoadingRows rows={6} /></Card>;
   const t = data.task;
+  const latestRun = latest.data?.run;
+  const latestDiagnosis = runs.data?.items[0]?.diagnosis ?? null;
+  const mainDataset = latestRun?.result ? latestRun.result.datasets.find((d) => !HIDDEN_SETS.includes(d.name)) ?? latestRun.result.datasets[0] ?? null : null;
   const okRuns = data.trend.filter((r) => r.status === "ok" || r.status === "partial");
   const avgMs = okRuns.length ? okRuns.reduce((s, r) => s + r.duration_ms, 0) / okRuns.length : null;
-  const failures = data.trend.slice(-10).filter((r) => r.status === "error" || r.status === "blocked").length;
   const origin = typeof window === "undefined" ? "http://localhost:3000" : window.location.origin;
 
   const runNow = async () => {
@@ -119,6 +78,8 @@ function TaskDetail({ id }: { id: string }) {
       void reload();
     } catch (e) { toast.error("Something went wrong", errorText(e)); } finally { setBusy(null); setConfirm(null); }
   };
+
+  const diagActions = diagnosisActions(t, { heal: () => setHeal(true), retry: () => void runNow() });
 
   const summary = describeTask({
     url: t.url, mode: t.mode, extract: t.extract.type === "selectors" ? { ...t.extract, itemSelector: t.extract.itemSelector ?? "" } : t.extract, options: t.options,
@@ -158,7 +119,8 @@ function TaskDetail({ id }: { id: string }) {
           </Card>
         )}
         {isPaused(t) && <Callout tone="warning" icon={<Pause className="size-4 text-warning" />} title="The schedule is paused" action={<Button size="sm" variant="secondary" onClick={() => void pause(false)}>Resume</Button>}>It keeps its settings and runs when you press Run now.</Callout>}
-        {failures >= 3 && <Callout tone="danger" title={`${failures} of the last 10 runs failed`} action={t.extract.type === "selectors" ? <Button size="sm" variant="secondary" icon={<Sparkles className="size-4" />} onClick={() => setHeal(true)}>Fix with AI</Button> : undefined}>Open a failed run on the Jobs tab to see why. A site redesign usually means a selector needs updating.</Callout>}
+        {data.pendingRepair && view !== "health" && view !== "repairs" && <PendingRepair taskId={id} p={data.pendingRepair} compact onDone={() => { void reload(); void runs.reload(); }} />}
+        {latestDiagnosis && view !== "health" && view !== "data" && <DiagnosisCard d={latestDiagnosis} compact {...diagActions} />}
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <Stat label="Last run" value={<RunStatusBadge status={t.last_status} />} hint={timeAgo(t.last_run_at)} />
@@ -168,20 +130,15 @@ function TaskDetail({ id }: { id: string }) {
           <Stat label="Next run" value={<span className="text-base">{data.nextRuns[0] ? timeAgo(data.nextRuns[0]) : isPaused(t) ? "paused" : "manual"}</span>} hint={data.nextRuns[0] ? dateTime(data.nextRuns[0]) : undefined} />
         </div>
 
-        {trend.length > 1 && (
-          <Card>
-            <CardHeader title="Rows per run" description={`Last ${plural(trend.length, "run")}. A sudden drop usually means the site changed.`} />
-            <div className="p-4">
-              <BarChart label="Rows per run" height={150} data={trend} series={[{ key: "ok", label: "ok", color: "var(--accent)" }, { key: "partial", label: "partial", color: "var(--warning)" }]} />
-            </div>
-          </Card>
-        )}
-
         <div>
           <Tabs value={view} onChange={setView} tabs={[
             { value: "data", label: "Latest data", icon: <Database className="size-4" /> },
+            { value: "health", label: "Health", icon: <Activity className="size-4" /> },
+            { value: "checks", label: "Checks", icon: <ShieldCheck className="size-4" />, count: data.openIssues || null },
             { value: "runs", label: "Runs", icon: <History className="size-4" />, count: runs.data?.items.length ?? null },
             { value: "jobs", label: "Jobs", count: data.jobs.length },
+            { value: "versions", label: "Versions", icon: <GitBranch className="size-4" />, count: data.versions > 1 ? data.versions : null },
+            { value: "repairs", label: "Repairs", icon: <Wrench className="size-4" />, count: data.pendingRepair ? 1 : null, hidden: t.extract.type !== "selectors" },
             { value: "setup", label: "Setup" },
             { value: "api", label: "API", icon: <Code2 className="size-4" /> },
           ]} />
@@ -191,6 +148,11 @@ function TaskDetail({ id }: { id: string }) {
                 <Card><EmptyState icon={<Database className="size-5" />} title="No data yet" action={<Button icon={<Play className="size-4" />} onClick={runNow} loading={busy === "run"}>Run now</Button>}>Run the task to see its data here.</EmptyState></Card>
               ) : latest.loading || !latest.data ? <Card><LoadingRows /></Card> : <ScrapeResultView run={latest.data.run} />
             )}
+
+            {view === "health" && <HealthTab task={t} onHeal={() => setHeal(true)} onRetry={() => void runNow()} onChanged={() => void reload()} />}
+            {view === "checks" && <ChecksTab key={t.version} task={t} dataset={mainDataset} onSaved={() => void reload()} />}
+            {view === "versions" && <VersionsTab task={t} onRestored={() => void reload()} />}
+            {view === "repairs" && <RepairsTab task={t} onHeal={() => setHeal(true)} onChanged={() => void reload()} />}
 
             {view === "runs" && (
               <Card>
@@ -202,7 +164,10 @@ function TaskDetail({ id }: { id: string }) {
                           <RunStatusBadge status={r.status} />
                           <span className="text-sm">{dateTime(r.created_at)}</span>
                           <span className="text-sm text-muted tabular-nums">{plural(r.row_count, "row")} · {plural(r.page_count, "page")} · {duration(r.duration_ms)}</span>
-                          {r.error && <span className="w-full truncate text-xs text-danger">{r.error}</span>}
+                          {r.score !== null && r.score !== undefined && <ScoreBadge score={r.score} status={r.validation?.status} />}
+                          {r.version ? <Badge>v{r.version}</Badge> : null}
+                          {r.diagnosis ? <span className={r.diagnosis.severity === "error" ? "w-full truncate text-xs text-danger" : "w-full truncate text-xs text-warning"}>{r.diagnosis.title}</span>
+                            : r.error && <span className="w-full truncate text-xs text-danger">{r.error}</span>}
                         </Link>
                       </li>
                     ))}

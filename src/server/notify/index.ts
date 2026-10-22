@@ -1,5 +1,4 @@
 import "server-only";
-import { createHmac } from "node:crypto";
 import nodemailer from "nodemailer";
 import { fetch as undiciFetch } from "undici";
 import type { NotifyChannels, Settings } from "@/lib/schemas";
@@ -8,10 +7,10 @@ import { dispatcherFor } from "../fetcher/http";
 import { audit } from "../repo/events";
 import { addNotification } from "../repo/notifications";
 import { getSettings } from "../repo/settings";
-import { env } from "../env";
+import { emitWebhook, type WebhookEvent } from "../integrations/webhooks";
 
 export type Alert = {
-  kind: "watcher" | "price" | "agent" | "system" | "task" | "deal";
+  kind: "watcher" | "price" | "agent" | "system" | "task" | "deal" | "briefing";
   title: string; body: string; url?: string | null;
   watcherId?: string | null; productId?: string | null;
   data?: Record<string, unknown>;
@@ -32,18 +31,20 @@ async function post(url: string, body: unknown, headers: Record<string, string> 
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
 }
 
-/** Signed with the session secret when one exists, so the receiver can verify the sender. */
-export async function sendWebhookPayload(payload: Record<string, unknown>) {
-  const { webhookUrl } = getSettings().notifications;
-  if (!webhookUrl) throw new Error("No webhook URL set in Settings → Alerts.");
-  const body = { ...payload, sentAt: new Date().toISOString() };
-  const secret = env.SCAPER_SESSION_SECRET;
-  const signature = secret ? createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex") : undefined;
-  await post(webhookUrl, body, signature ? { "x-scaper-signature": signature } : {});
-}
+const ALERT_EVENT: Record<Alert["kind"], WebhookEvent> = {
+  watcher: "watcher.change", price: "price", deal: "price", task: "task.health", agent: "alert", system: "alert", briefing: "alert",
+};
 
+/**
+ * Alerts go to every webhook endpoint subscribed to their event, signed (HMAC-SHA256 in x-scaper-signature),
+ * logged in Integrations → Webhooks and retried on failure.
+ */
 export async function sendWebhook(alert: Alert) {
-  await sendWebhookPayload({ event: `scaper.${alert.kind}`, title: alert.title, body: alert.body, url: alert.url ?? null, data: alert.data ?? {} });
+  const data = alert.data ?? {};
+  await emitWebhook(ALERT_EVENT[alert.kind], {
+    kind: alert.kind, title: alert.title, body: alert.body, url: alert.url ?? null, data,
+    ...(alert.kind === "watcher" ? { important: data.important ?? null, summary: data.summary ?? null } : {}),
+  }, { refId: alert.watcherId ?? alert.productId ?? (typeof data.recipeId === "string" ? data.recipeId : null), strict: true, name: `scaper.${alert.kind}` });
 }
 
 const escapeMd = (s: string) => s.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, "\\$&");
@@ -129,9 +130,9 @@ export function inQuietHours(n: Settings["notifications"], at = new Date()) {
 
 /** Which external channels are configured, for "send to every channel I have set up". */
 export function configuredChannels(): NotifyChannels {
-  const n = getSettings().notifications;
+  const { notifications: n, integrations } = getSettings();
   return {
-    desktop: true, webhook: Boolean(n.webhookUrl), telegram: Boolean(n.telegramBotToken && n.telegramChatId), discord: Boolean(n.discordWebhookUrl),
+    desktop: true, webhook: Boolean(n.webhookUrl || integrations.webhooks.some((w) => w.enabled)), telegram: Boolean(n.telegramBotToken && n.telegramChatId), discord: Boolean(n.discordWebhookUrl),
     slack: Boolean(n.slackWebhookUrl), ntfy: Boolean(n.ntfyUrl), email: Boolean(n.smtpHost && n.emailTo),
   };
 }

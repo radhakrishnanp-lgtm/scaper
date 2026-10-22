@@ -27,7 +27,7 @@ type Status = "all" | "ok" | "error" | "cached";
 
 const PURPOSES: Record<string, string> = {
   agent: "Agent", extract: "AI extraction", fields: "Field suggestions", columns: "AI columns", selectors: "Selector suggestions", plan: "Category planning",
-  heal: "Fix with AI", watcher: "Watcher summaries", deals: "Deal ranking", test: "Tests", chat: "Other",
+  heal: "Fix with AI", watcher: "Watcher triage", deals: "Deal ranking", test: "Tests", chat: "Other", briefing: "Briefings", rules: "Data check suggestions",
 };
 const money = (v: number) => (v >= 1 ? `$${v.toFixed(2)}` : v > 0 ? `$${v.toFixed(4)}` : "$0");
 const tokens = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : n.toLocaleString("en-IN"));

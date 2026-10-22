@@ -25,6 +25,9 @@
 | CSV injection | Cells starting with `= + - @` are prefixed with `'` | `src/lib/csv.ts` |
 | Huge pages | 10 MB response cap, timeouts on every fetch and AI call | `fetcher/http.ts`, `ai/client.ts` |
 | Abuse / cost | Per-endpoint rate limits, AI daily request cap, per-host crawl delay and backoff | `api.ts`, `ai/client.ts`, `fetcher/politeness.ts` |
+| MCP clients | `/api/mcp` needs a Bearer token from other apps (same rules as the API). Tools that change things are not even listed until "Allow changes" is on, and are refused if called anyway; the agent's private browser is never exposed. Every call is in the audit log | `server/mcp/server.ts` |
+| Webhooks and Sheets | Endpoint URLs, signing secrets and the Google service account key are masked to the browser and never exported; deliveries are signed per endpoint; payloads in the delivery log are capped at 64 KB and pruned after 30 days; private work is sent but not logged | `integrations/*`, `repo/settings.ts`, `repo/deliveries.ts` |
+| AI repairs | New selectors from the model are tested with the static parser and checked against the last good run before anything is saved; auto mode only applies a repair that passes, and every change is a version you can roll back | `ops/heal.ts`, `repo/versions.ts` |
 | Clickjacking etc. | `X-Frame-Options: DENY`, `nosniff`, Referrer-Policy, Permissions-Policy | `next.config.ts` |
 
 ## AI and private mode

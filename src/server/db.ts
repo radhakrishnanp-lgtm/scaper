@@ -381,6 +381,108 @@ ALTER TABLE agent_runs ADD COLUMN pending TEXT;
 ALTER TABLE agent_runs ADD COLUMN model_label TEXT;
 `,
   },
+  {
+    id: 6,
+    name: "operations",
+    sql: `
+-- Every saved change of a task or watcher, so a run can say which setup it used and you can roll back.
+ALTER TABLE recipes ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE recipes ADD COLUMN health_alerted_at TEXT;
+ALTER TABLE watchers ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE config_versions (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('task','watcher')),
+  ref_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  source TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE (kind, ref_id, version)
+);
+CREATE INDEX idx_versions_ref ON config_versions(kind, ref_id, version DESC);
+
+-- What went wrong (cause, evidence, next step) and the validation score of each run.
+ALTER TABLE scrape_runs ADD COLUMN version INTEGER;
+ALTER TABLE scrape_runs ADD COLUMN diagnosis TEXT;
+ALTER TABLE scrape_runs ADD COLUMN score REAL;
+ALTER TABLE scrape_runs ADD COLUMN validation TEXT;
+
+-- Validation problems tracked across runs: new when a rule starts failing, resolved when it passes again.
+CREATE TABLE quality_issues (
+  id TEXT PRIMARY KEY,
+  recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  rule_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('warn','fail')),
+  status TEXT NOT NULL CHECK (status IN ('open','resolved')),
+  detail TEXT NOT NULL,
+  first_run_id TEXT,
+  last_run_id TEXT,
+  runs INTEGER NOT NULL DEFAULT 1,
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  resolved_at TEXT
+);
+CREATE INDEX idx_quality_issues ON quality_issues(recipe_id, status, last_seen DESC);
+
+-- Repairs prepared by the AI when a task breaks: applied on their own or waiting for you.
+CREATE TABLE heal_proposals (
+  id TEXT PRIMARY KEY,
+  recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  run_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending','applied','dismissed','failed')),
+  reason TEXT NOT NULL,
+  extract TEXT,
+  report TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  decided_at TEXT
+);
+CREATE INDEX idx_heal_recipe ON heal_proposals(recipe_id, created_at DESC);
+
+-- Change triage: importance (AI or you), reviewed, and your feedback.
+ALTER TABLE snapshots ADD COLUMN important INTEGER;
+ALTER TABLE snapshots ADD COLUMN summary TEXT;
+ALTER TABLE snapshots ADD COLUMN reviewed_at TEXT;
+ALTER TABLE snapshots ADD COLUMN feedback TEXT;
+CREATE INDEX idx_snapshots_changes ON snapshots(changed, created_at DESC);
+
+-- Outgoing webhooks and Google Sheets syncs: every attempt, its response, and retries.
+CREATE TABLE deliveries (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('webhook','sheets')),
+  target TEXT NOT NULL,
+  target_name TEXT NOT NULL DEFAULT '',
+  event TEXT NOT NULL,
+  url TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','ok','retrying','failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  response_code INTEGER,
+  response_body TEXT,
+  error TEXT,
+  latency_ms INTEGER,
+  next_attempt_at TEXT,
+  ref_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_deliveries_created ON deliveries(created_at DESC);
+CREATE INDEX idx_deliveries_due ON deliveries(status, next_attempt_at);
+
+-- Saved table views (columns, filters, sort) per dataset.
+CREATE TABLE saved_views (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  name TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_saved_views_scope ON saved_views(scope, created_at);
+`,
+  },
 ];
 
 function migrate(db: Database.Database) {

@@ -365,6 +365,8 @@ export function WatcherEditor({ id, initial }: { id?: string; initial: WatcherDr
             </div>
             <div className="flex flex-wrap gap-6">
               {textTarget && <Switch label="AI summary in alerts" description="One line on what changed, from your fast model." checked={o.aiSummary} onChange={(v) => setOpt("aiSummary", v)} />}
+              {textTarget && <Switch label="AI decides what's important" description="Your fast model marks each change important or not, using your question and your “Not useful” feedback from the Changes inbox." checked={o.aiImportance} onChange={(v) => setOpt("aiImportance", v)} />}
+              {textTarget && o.aiImportance && <Switch label="Only alert on important changes" description="Every change still lands in the Changes inbox." checked={o.importantOnly} onChange={(v) => setOpt("importantOnly", v)} />}
               {d.target.type !== "visual" && (info.forcedMode ?? d.mode) === "browser" && <Switch label="Screenshot with each change" checked={o.screenshot} onChange={(v) => setOpt("screenshot", v)} />}
               <Switch label="Enabled" checked={d.enabled} onChange={(v) => set("enabled", v)} />
             </div>

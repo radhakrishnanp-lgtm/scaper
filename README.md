@@ -9,10 +9,19 @@ Scaper is a local-first web scraper, website watcher and price tracker with an A
 | **Quick scrape** | Paste a URL. Auto finds product lists, tables, structured data, links and images; Selectors gives exact columns; AI takes a plain-language description. **Pick on page** lets you click elements on a screenshot, **Build with AI** proposes selectors and tests them, and live match counts show as you type. Next pages, page actions (click, type, scroll, wait…) and screenshots. Export CSV, Excel, JSON or NDJSON. |
 | **Category scrape** | Give a site and say what you want. Your AI picks the category pages from the site's menus, Scaper works out the item layout and the next-page link, and reads every category page by page. Run it once, privately, or save it as a scheduled task. |
 | **Tasks** | Saved scrapes with a full editor and seven templates (listing, list → detail pages, tables, crawl a section, many inputs from a CSV, alert on new listings, AI). Start URL ranges like `/page/{1..20}`, sitemaps, crawl rules with include/exclude patterns, open each row's detail page, dedupe, 12 clean-up transforms per field, data quality checks, "new rows" and "removed rows" alerts, files and webhook output, retries, interval or cron schedules. **Test run** before saving. |
+| **Operations** | One page for "is everything doing its job": success rate, an uptime strip per task, p95 run time, data score and open issues for every task, watcher response times, and failures grouped by cause across everything they affect. |
+| **Health per task** | A Health tab with a 30-day strip, rows per run against the usual range Scaper learns from good runs, timings, and one alert when a task gets unhealthy (fails N times in a row, too few rows, unusually few rows, too slow) and one when it recovers. |
+| **Failure reports** | Every broken run says where the problem is (the site, your setup, the data, Scaper), what it means in plain words, what the page looked like (a screenshot), and offers the one button most likely to fix it. |
+| **Data checks** | Expectations per column (filled, unique, pattern, number range, one of, type, length) and per run (row count, duplicates), with "in 95% of rows". Scaper or your AI suggests them from a good run; each run gets a score; issues open when a check starts failing and resolve when it passes again. |
+| **Self-repair and versions** | When a site redesign breaks the selectors, your AI proposes new ones and Scaper tests them against the last good run (rows, filled columns, same items). Prepare-and-ask or apply automatically. Every setup change (yours, the AI's, a restore) is a version with a diff and one-click rollback. |
 | **Runs** | Every task run, check and refresh is a job you can watch live with progress and logs, cancel or retry. Several sites run in parallel, each site one request at a time. |
 | **Watchers** | Whole page, part of a page, price & stock, visual (screenshot pixel diff), JSON API value, RSS/Atom feed, sitemap and uptime. Rules: any change, text appears/disappears, pattern, above/below, % drop/rise, back in stock, "AI decides it matters", combined with all/any. Noise filters, active hours and days, page actions before reading, quiet period after an alert. Side-by-side or inline diff of any two checks. |
 | **Prices & deals** | Track products from Amazon or any shop. Scaper builds its own price history (Keepa-style): all-time low and high, 30/90/180/365-day averages, real discount vs the shop's claimed M.R.P. discount, a deal score. Scan a listing with filters (discount, price, rating, reviews, words, sponsored), save it as a search that alerts on new matches. |
-| **Alerts** | In-app inbox and desktop pop-ups, plus Telegram, email (SMTP), Discord, Slack, ntfy push and webhooks (n8n, Make, Zapier, Home Assistant). Quiet hours, a daily digest, mute all, failure alerts. |
+| **Changes inbox** | Every change your watchers find, in one triage inbox (keyboard: j/k, i, e, x). Your AI can mark changes important and summarize them; "Not useful" teaches the watcher which lines to ignore and becomes an example for the AI. |
+| **Briefings** | A daily or weekly briefing across all watchers and tasks (filtered by tags, optional AI executive summary, skipped when quiet), sent to your channels or downloaded as a page or Markdown. |
+| **Alerts** | In-app inbox and desktop pop-ups, plus Telegram, email (SMTP), Discord, Slack, ntfy push and webhooks (n8n, Make, Zapier, Home Assistant). Quiet hours, mute all, failure alerts. |
+| **Integrations** | An MCP server so Claude Code, Claude Desktop, Cursor and other AI apps can use Scaper's tools (read-only unless you allow changes). Named webhook endpoints with per-event subscriptions, HMAC signatures, retries with backoff, a delivery log and redeliver. Google Sheets sync per task (replace, append or update rows by key) with a service account. |
+| **Data grid** | Typed columns, per-column stats and filters (values, ranges, empty), pin, resize, hide, saved views per task, virtual scrolling for 100 000 rows, a row drawer, copy for Excel and export. |
 | **AI agent** | Ask in plain words. It has 40 tools: read and extract pages, its own browser (click, type, choose, scroll), map a site, plan category scrapes, create and schedule tasks, compare runs, watchers, prices and deals, memory. It asks before changing anything (or not, if you say so), shows every step, takes follow-ups, and runs on any model you choose. |
 | **AI log & history** | Every model call with tokens, cost, time and the full prompt and reply. A timeline of everything Scaper did, and a comparison of any two runs of a task. |
 | **Private mode** | Private scrapes, category scrapes and agent chats stay in memory only: nothing in Data, the AI log, site statistics or the activity log. Delete history by kind and age, with the database compacted afterwards. |
@@ -100,6 +109,7 @@ All optional. Copy `.env.example` to `.env.local`.
 | `SCAPER_ALLOWED_HOSTS` | empty | Extra host names allowed to reach the app, e.g. your domain |
 | `PLAYWRIGHT_EXECUTABLE_PATH` | empty | Use an existing Chrome/Chromium |
 | `SCAPER_SCHEDULER` | `on` | Set `off` to stop background checks |
+| `SCAPER_GOOGLE_TOKEN_URL` · `SCAPER_SHEETS_API_URL` | Google's | Override the Google endpoints (tests, corporate proxies) |
 
 ## Use it from scripts
 
@@ -111,6 +121,16 @@ curl -X POST -H "Authorization: Bearer $SCAPER_TOKEN" "http://127.0.0.1:3000/api
 ```
 
 Every route is in [docs/API.md](docs/API.md). The same page has bookmarklets ("Scrape this page", "Watch this page", "Track this price") for your browser's bookmarks bar.
+
+## Connect AI apps (MCP)
+
+Scaper answers MCP at `/api/mcp` (Streamable HTTP). Create a token in **Settings → API & import**, then for Claude Code:
+
+```bash
+claude mcp add --transport http scaper http://127.0.0.1:3000/api/mcp --header "Authorization: Bearer scp_…"
+```
+
+Apps that only start local servers (Claude Desktop) use the bridge: `SCAPER_URL=http://127.0.0.1:3000 SCAPER_TOKEN=scp_… node scripts/scaper-mcp.mjs`. **Integrations → MCP** has copy-ready snippets, a test button and the list of tools. Tools that change things are off until you turn on "Allow changes".
 
 ## Stack
 
@@ -124,5 +144,6 @@ Next.js 16 (App Router, TypeScript strict), Tailwind CSS 4, SQLite via better-sq
 - [docs/RUNBOOK.md](docs/RUNBOOK.md): backups, VPS deploy, troubleshooting
 - [docs/RESEARCH.md](docs/RESEARCH.md): market research and build brief
 - [docs/AI_RESEARCH.md](docs/AI_RESEARCH.md): how leading tools use LLMs and what Scaper took from them
+- [docs/ENTERPRISE_RESEARCH.md](docs/ENTERPRISE_RESEARCH.md): what enterprise scraping and monitoring platforms offer in 2026, and the gaps this release closed
 - [docs/COMPETITIVE_RESEARCH.md](docs/COMPETITIVE_RESEARCH.md): feature gaps against Apify, Browse AI, Octoparse, Visualping, Distill, Keepa and others
 - [PROJECT_STATE.md](PROJECT_STATE.md): status, decisions and next steps

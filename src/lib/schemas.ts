@@ -150,6 +150,34 @@ export const aiColumnSchema = z.object({
 });
 export type AiColumn = z.infer<typeof aiColumnSchema>;
 
+/** One expectation about a task's data, checked on every run (Great Expectations / Soda style). */
+export const VALIDATION_CHECKS = ["not_empty", "unique", "pattern", "range", "one_of", "type", "length", "row_count", "duplicates"] as const;
+export const VALUE_TYPES = ["number", "url", "image", "date", "email", "integer", "boolean"] as const;
+export const validationRuleSchema = z.object({
+  id: z.string().trim().min(1).max(40),
+  // A column name, or "*" for checks on the whole run (row count, duplicate rows).
+  column: z.string().trim().min(1).max(60),
+  check: z.enum(VALIDATION_CHECKS),
+  // pattern: a regular expression; one_of: allowed values separated by "|"; type: one of VALUE_TYPES.
+  arg: z.string().trim().max(500).default(""),
+  min: z.number().nullable().default(null),
+  max: z.number().nullable().default(null),
+  // Share of rows that must pass ("mostly"), so one odd row doesn't fail a run.
+  mostly: z.number().min(1).max(100).default(100),
+  severity: z.enum(["warn", "fail"]).default("fail"),
+  enabled: z.boolean().default(true),
+  note: z.string().trim().max(200).default(""),
+}).superRefine((r, ctx) => {
+  if (r.check === "pattern") {
+    if (!r.arg) ctx.addIssue({ code: "custom", path: ["arg"], message: "Pattern is required" });
+    else { try { new RegExp(r.arg); } catch { ctx.addIssue({ code: "custom", path: ["arg"], message: "Not a valid regular expression" }); } }
+  }
+  if (r.check === "one_of" && !r.arg) ctx.addIssue({ code: "custom", path: ["arg"], message: "List the allowed values, separated by |" });
+  if (r.check === "type" && !(VALUE_TYPES as readonly string[]).includes(r.arg)) ctx.addIssue({ code: "custom", path: ["arg"], message: "Choose a type" });
+  if (["range", "length", "row_count"].includes(r.check) && r.min === null && r.max === null) ctx.addIssue({ code: "custom", path: ["min"], message: "Set a minimum, a maximum or both" });
+});
+export type ValidationRule = z.infer<typeof validationRuleSchema>;
+
 export const taskOptionsSchema = z.object({
   // More start URLs, one per line. Ranges expand: https://site/page/{1..5}
   startUrls: z.array(z.string().trim().min(1).max(2048)).max(5000).default([]),
@@ -203,7 +231,31 @@ export const taskOptionsSchema = z.object({
   output: z.object({
     files: z.array(z.enum(["csv", "json", "xlsx", "ndjson"])).max(4).default([]),
     webhook: z.boolean().default(false),
-  }).default({ files: [], webhook: false }),
+    // Copy the rows to a Google Sheet after each run: add them, replace the sheet, or update rows by key.
+    sheets: z.object({
+      enabled: z.boolean().default(false),
+      spreadsheet: z.string().trim().max(300).default(""),
+      sheet: z.string().trim().max(100).default("Sheet1"),
+      mode: z.enum(["append", "upsert", "replace"]).default("upsert"),
+      keyFields: z.array(z.string().trim().min(1).max(60)).max(5).default([]),
+    }).default({ enabled: false, spreadsheet: "", sheet: "Sheet1", mode: "upsert", keyFields: [] }),
+  }).default({ files: [], webhook: false, sheets: { enabled: false, spreadsheet: "", sheet: "Sheet1", mode: "upsert", keyFields: [] } }),
+  // Expectations checked on every run, with a score and issues tracked as new or resolved.
+  validation: z.object({
+    rules: z.array(validationRuleSchema).max(40).default([]),
+    alert: z.enum(["off", "fail", "warn"]).default("fail"),
+  }).default({ rules: [], alert: "fail" }),
+  // Health alerts on top of plain failures: too few rows, too slow, or outside the usual range.
+  health: z.object({
+    minRows: z.number().int().min(0).max(1_000_000).nullable().default(null),
+    maxDurationSeconds: z.number().int().min(1).max(86_400).nullable().default(null),
+    anomaly: z.boolean().default(true),
+    failStreak: z.number().int().min(1).max(20).default(2),
+    recovered: z.boolean().default(true),
+  }).default({ minRows: null, maxDurationSeconds: null, anomaly: true, failStreak: 2, recovered: true }),
+  // When the task breaks: have the AI prepare new selectors and check them against the last good run.
+  // "ask" keeps the fix for you to review, "auto" applies it when the check passes (you can roll back).
+  heal: z.object({ mode: z.enum(["off", "ask", "auto"]).default("ask") }).default({ mode: "ask" }),
   // Category pages to read instead of the start URL; each row gets a "category" column.
   categories: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().trim().min(1).max(2048) })).max(500).default([]),
   // When the selectors find nothing on a page that loaded fine, let the AI read that page instead.
@@ -296,6 +348,10 @@ export const watcherOptionsSchema = z.object({
   cooldownMinutes: z.number().int().min(0).max(10080).default(0),
   // Add a one-line AI summary of what changed to each alert.
   aiSummary: z.boolean().default(false),
+  // Let the AI mark each change important or not (it learns from your "not useful" feedback).
+  aiImportance: z.boolean().default(false),
+  // Only alert on changes the AI marks important (needs aiImportance).
+  importantOnly: z.boolean().default(false),
   // Extra conditions, combined with the main one.
   moreConditions: z.array(conditionSchema).max(9).default([]),
   match: z.enum(["all", "any"]).default("all"),
@@ -518,9 +574,37 @@ export const notificationSettingsSchema = z.object({
   errorAlertCooldownMinutes: z.number().int().min(0).max(10080).default(360),
   // Pause every external channel at once (alerts still reach the inbox).
   muteAll: z.boolean().default(false),
-  // Once a day, one message with everything that changed.
-  digest: z.enum(["off", "daily"]).default("off"),
+  // A briefing with everything that changed: daily or weekly, optionally written by your AI.
+  digest: z.enum(["off", "daily", "weekly"]).default("off"),
   digestHour: z.number().int().min(0).max(23).default(8),
+  digestDay: z.number().int().min(0).max(6).default(1),
+  digestTags: z.array(z.string().trim().min(1).max(40)).max(12).default([]),
+  digestTagMatch: z.enum(["any", "all"]).default("any"),
+  digestAi: z.boolean().default(false),
+  // Skip the briefing when nothing important changed.
+  digestSkipQuiet: z.boolean().default(true),
+});
+
+export const WEBHOOK_EVENTS = ["task.finished", "task.failed", "task.health", "watcher.change", "price", "alert"] as const;
+export const webhookEndpointSchema = z.object({
+  id: z.string().trim().min(1).max(40),
+  name: z.string().trim().min(1, "Name is required").max(80),
+  url: z.string().trim().url("Use a full URL starting with https://").max(1000),
+  secret: z.string().max(200).default(""),
+  events: z.array(z.enum(WEBHOOK_EVENTS)).max(WEBHOOK_EVENTS.length).default([...WEBHOOK_EVENTS]),
+  enabled: z.boolean().default(true),
+});
+export type WebhookEndpoint = z.infer<typeof webhookEndpointSchema>;
+
+export const integrationSettingsSchema = z.object({
+  webhooks: z.array(webhookEndpointSchema).max(10).default([]),
+  // Retry failed webhook deliveries with backoff (30 s, 2 min, 10 min, 1 h, 6 h).
+  webhookRetries: z.boolean().default(true),
+  // Google service account key (JSON) for Sheets sync. Share each sheet with the account's email.
+  googleServiceAccount: z.string().max(10_000).default(""),
+  // MCP: AI apps like Claude Desktop, Claude Code and Cursor can use Scaper's tools with an API token.
+  mcpEnabled: z.boolean().default(true),
+  mcpAllowWrite: z.boolean().default(false),
 });
 
 export const dataSettingsSchema = z.object({
@@ -539,6 +623,7 @@ export const settingsSchema = z.object({
   scraping: scrapingSettingsSchema,
   notifications: notificationSettingsSchema,
   data: dataSettingsSchema,
+  integrations: integrationSettingsSchema.default(integrationSettingsSchema.parse({})),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -547,6 +632,7 @@ export const settingsPatchSchema = z.object({
   scraping: scrapingSettingsSchema.partial().optional(),
   notifications: notificationSettingsSchema.partial().optional(),
   data: dataSettingsSchema.partial().optional(),
+  integrations: integrationSettingsSchema.partial().optional(),
 });
 
 export const apiTokenSchema = z.object({ name: z.string().trim().min(1, "Name is required").max(80) });

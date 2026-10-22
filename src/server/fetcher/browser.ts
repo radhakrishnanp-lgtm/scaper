@@ -94,6 +94,8 @@ export type BrowserOptions = {
   maxConcurrency: number; allowPrivate: boolean; scroll?: boolean; inspect?: boolean;
   steps?: BrowserStep[]; pagination?: Pagination; headers?: Record<string, string>; cookies?: string;
   capture?: { selector?: string; fullPage?: boolean }; signal?: AbortSignal;
+  /** On failure after the page opened, attach a screenshot to the error (failure reports). */
+  evidence?: boolean;
 };
 
 /** Accepts a Cookie header ("a=1; b=2") or a JSON export from a browser cookie extension. */
@@ -202,6 +204,7 @@ export async function browserGet(url: string, opts: BrowserOptions): Promise<Bro
       javaScriptEnabled: true,
     });
     const onAbort = () => { void context.close().catch(() => undefined); };
+    let opened: Awaited<ReturnType<typeof context.newPage>> | null = null;
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     try {
       const target = new URL(url);
@@ -220,6 +223,7 @@ export async function browserGet(url: string, opts: BrowserOptions): Promise<Bro
         return route.continue();
       });
       const page = await context.newPage();
+      opened = page;
       page.setDefaultTimeout(opts.timeoutMs);
       let response;
       try {
@@ -307,6 +311,10 @@ export async function browserGet(url: string, opts: BrowserOptions): Promise<Bro
       return { status, url: page.url(), html, title, text, screenshot, pages, capture, stepLog };
     } catch (e) {
       if (opts.signal?.aborted) throw new FetchError("cancelled", "Cancelled.");
+      if (opts.evidence && opened && e instanceof FetchError && !e.evidence) {
+        const shot = await opened.screenshot({ type: "jpeg", quality: 55, timeout: 5000 }).catch(() => null);
+        if (shot) e.evidence = shot.toString("base64");
+      }
       throw e;
     } finally {
       opts.signal?.removeEventListener("abort", onAbort);

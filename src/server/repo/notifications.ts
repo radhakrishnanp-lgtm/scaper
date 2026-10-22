@@ -9,7 +9,7 @@ export type Notification = {
 
 export function addNotification(n: { kind: string; title: string; body: string; url?: string | null; watcherId?: string | null; productId?: string | null }) {
   const row: Notification = {
-    id: newId(), kind: n.kind, title: n.title.slice(0, 200), body: n.body.slice(0, 2000), url: n.url ?? null,
+    id: newId(), kind: n.kind, title: n.title.slice(0, 200), body: n.body.slice(0, n.kind === "briefing" ? 12_000 : 2000), url: n.url ?? null,
     watcher_id: n.watcherId ?? null, product_id: n.productId ?? null, read_at: null, created_at: now(),
   };
   db().prepare(

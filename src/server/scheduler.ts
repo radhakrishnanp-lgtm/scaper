@@ -5,6 +5,9 @@ import { closeBrowser } from "./fetcher/browser";
 import { enqueue, pump } from "./jobs";
 import { log } from "./log";
 import { configuredChannels, deliver } from "./notify";
+import { processDueDeliveries } from "./integrations/webhooks";
+import { briefingOptions, buildBriefing } from "./ops/briefing";
+import { pruneDeliveries } from "./repo/deliveries";
 import { listBackups } from "./ops/backup";
 import { failStaleAgentRuns } from "./repo/agent";
 import { claimDueDealSearches } from "./repo/deal-searches";
@@ -17,7 +20,7 @@ import { claimDueRecipes, pruneRuns } from "./repo/scrapes";
 import { getSettings } from "./repo/settings";
 import { pruneHostStats } from "./repo/sites";
 import { db } from "./db";
-import { changesSince, claimDueWatchers, pruneSnapshots, referencedMedia } from "./repo/watchers";
+import { claimDueWatchers, pruneSnapshots, referencedMedia } from "./repo/watchers";
 import { deleteMedia, mediaRoot } from "./watch/visual";
 
 const TICK_MS = 15_000;
@@ -53,6 +56,7 @@ async function maintenance() {
     events: pruneEvents(d.keepEventsDays), notifications: pruneNotifications(90), runs: pruneRuns(d.keepRuns),
     snapshots: snaps.removed, jobs: pruneJobs(d.keepJobsDays), hostStats: pruneHostStats(90), orphanMedia: await cleanOrphanMedia(),
     aiCalls: deleteAiCalls(ai.keepCallsDays), aiCache: clearAiCache(Math.max(1, ai.cacheHours)),
+    deliveries: pruneDeliveries(d.keepEventsDays), runMedia: await cleanRunMedia(),
   };
   db().pragma("wal_checkpoint(TRUNCATE)");
   log.info("maintenance.done", removed);
@@ -64,27 +68,36 @@ async function maintenance() {
   }
 }
 
-/** Once a day at the chosen hour: one message listing every watcher change of the last 24 hours. */
+/** At the chosen hour (daily, or weekly on the chosen day): one briefing of everything that changed. */
 async function maybeDigest() {
   const n = getSettings().notifications;
-  if (n.digest !== "daily") return;
+  if (n.digest === "off") return;
   const nowD = new Date();
   const day = nowD.toISOString().slice(0, 10);
   if (state.lastDigestDay === day || nowD.getHours() !== n.digestHour) return;
+  if (n.digest === "weekly" && nowD.getDay() !== n.digestDay) return;
   state.lastDigestDay = day;
   const already = db().prepare("SELECT 1 FROM event_log WHERE event = 'digest.sent' AND created_at >= ?").get(`${day}T00:00:00`);
   if (already) return;
-  const changes = changesSince(new Date(Date.now() - 86400_000).toISOString());
-  const byWatcher = new Map<string, { name: string; url: string; count: number }>();
-  for (const c of changes) {
-    const e = byWatcher.get(c.watcher_id) ?? { name: c.name, url: c.url, count: 0 };
-    e.count++;
-    byWatcher.set(c.watcher_id, e);
+  const b = await buildBriefing(briefingOptions(n));
+  if (b.quiet && n.digestSkipQuiet) {
+    audit("digest.skipped", { changes: b.stats.changes, reason: "nothing important" });
+    return;
   }
-  const lines = [...byWatcher.values()].sort((a, b) => b.count - a.count).map((e) => `• ${e.name}: ${e.count} change${e.count === 1 ? "" : "s"}`);
-  const body = lines.length ? lines.slice(0, 40).join("\n") : "No watcher saw a change in the last 24 hours.";
-  await deliver({ kind: "system", title: `Daily digest: ${changes.length} change${changes.length === 1 ? "" : "s"} on ${byWatcher.size} watcher${byWatcher.size === 1 ? "" : "s"}`, body }, { ...configuredChannels(), desktop: false });
-  audit("digest.sent", { changes: changes.length });
+  await deliver({ kind: "briefing", title: b.title, body: b.text }, { ...configuredChannels(), desktop: false });
+  audit("digest.sent", { changes: b.stats.changes, important: b.stats.important });
+}
+
+/** Failure screenshots of runs that were pruned or deleted. */
+async function cleanRunMedia() {
+  const dir = path.join(mediaRoot(), "runs");
+  const files = await fs.readdir(dir).catch(() => [] as string[]);
+  if (!files.length) return 0;
+  const keep = new Set((db().prepare("SELECT diagnosis FROM scrape_runs WHERE diagnosis LIKE '%runs/%'").all() as { diagnosis: string }[])
+    .map((r) => (JSON.parse(r.diagnosis) as { screenshot?: string }).screenshot).filter(Boolean));
+  let removed = 0;
+  for (const f of files) if (!keep.has(`runs/${f}`)) { await fs.rm(path.join(dir, f), { force: true }); removed++; }
+  return removed;
 }
 
 async function tick() {
@@ -92,6 +105,7 @@ async function tick() {
   try {
     if (Date.now() - state.lastMaintenance > MAINTENANCE_MS) await maintenance();
     await maybeDigest();
+    await processDueDeliveries();
     // Keep the queue short: only claim new work when the backlog is small.
     const s = getSettings().scraping;
     const counts = jobCounts();

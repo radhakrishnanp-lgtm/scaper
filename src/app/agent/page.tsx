@@ -42,6 +42,7 @@ const TOOL_LABEL: Record<string, string> = {
   list_runs: "Listed runs", get_run_rows: "Read run rows", compare_runs: "Compared runs",
   list_watchers: "Listed watchers", create_watcher: "Created watcher", check_watcher: "Checked watcher", pause_watcher: "Paused watcher", delete_watcher: "Deleted watcher", recent_changes: "Read recent changes",
   scan_deals: "Scanned deals", price_history: "Checked price history", list_tracked_products: "Listed tracked products", track_product: "Started tracking", untrack_product: "Stopped tracking", create_deal_search: "Created deal search",
+  task_health: "Checked task health", repair_task: "Started AI repair", job_status: "Checked job", change_inbox: "Read change inbox", review_changes: "Marked changes reviewed", briefing: "Wrote briefing",
   notify_user: "Sent alert", site_info: "Checked site", slow_down_site: "Slowed down site", remember: "Remembered", forget: "Forgot", search_scaper: "Searched Scaper", ai_usage: "Checked AI usage",
   // Older conversations
   open_page: "Opened page",

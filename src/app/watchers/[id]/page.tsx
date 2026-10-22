@@ -3,7 +3,7 @@
 import { Suspense, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BellRing, ChevronLeft, ChevronRight, CircleSlash, Eraser, ExternalLink, History, Image as ImageIcon, LineChart, ListChecks, MoreHorizontal, Pause, Pencil, Play, RefreshCw, Send, Settings2, Trash2 } from "lucide-react";
+import { BellRing, ChevronLeft, ChevronRight, CircleSlash, Eraser, ExternalLink, History, Image as ImageIcon, LineChart, ListChecks, MoreHorizontal, Pause, Pencil, Play, RefreshCw, Send, Settings2, Trash2, GitBranch } from "lucide-react";
 import type { Job } from "@/server/repo/jobs";
 import type { Snapshot } from "@/server/repo/watchers";
 import { PriceChart } from "@/components/charts";
@@ -20,10 +20,11 @@ import { cn } from "@/lib/cn";
 import { dateTime, duration, hostOf, interval, plural, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
+import { VersionsTab } from "@/components/task-ops";
 
 type Detail = { watcher: WatcherView; series: { value: number; created_at: string }[]; nextRuns: string[]; jobs: Job[]; current: { content: string; created_at: string; value: number | null; screenshot: string | null } | null };
 type Side = { id: string; content: string; created_at: string; screenshot: string | null; visual_diff: string | null; visual_change: number | null; value: number | null; verdict: Snapshot["verdict"] };
-type View = "changes" | "current" | "values" | "checks" | "setup";
+type View = "changes" | "current" | "values" | "checks" | "setup" | "versions";
 
 const media = (p: string) => `/api/media/${p}`;
 
@@ -225,7 +226,9 @@ function WatcherDetail({ id }: { id: string }) {
           { value: "values", label: w.target.type === "status" ? "Response times" : "Values", icon: <LineChart className="size-4" />, hidden: data.series.length === 0 },
           { value: "checks", label: "Checks", icon: <ListChecks className="size-4" />, count: data.jobs.length },
           { value: "setup", label: "Setup", icon: <Settings2 className="size-4" /> },
+          { value: "versions", label: "Versions", icon: <GitBranch className="size-4" /> },
         ]} />
+        {view === "versions" && <VersionsTab kind="watcher" task={{ id }} onRestored={() => void reload()} />}
 
         {view === "changes" && <Changes id={id} watcher={w} />}
         {view === "current" && <Current d={data} />}

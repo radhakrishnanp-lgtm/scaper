@@ -30,6 +30,10 @@ Personal use on your own machine ("enterprise level" features, not a public rele
 | Many providers, OpenAI-compatible only | One protocol covers cloud, gateways and local models; legacy single-provider settings migrate to a provider called "default" |
 | Agent changes need approval by default | Prompt injection from a page cannot make changes without you seeing them |
 | Private work in memory (AsyncLocalStorage context) | One flag covers every write path (runs, jobs, AI log, stats, audit) without a second database |
+| Health alerts once per problem, only for scheduled/API runs | No alert storms; manual runs update state without paging you |
+| Self-repair tested against the last good run, 6 h cooldown, versioned | An AI fix is never applied blind; anything it changes can be rolled back |
+| MCP write tools gated by "Allow changes" | MCP apps have no approval card like the built-in agent |
+| Old webhook event names kept (`scaper.watcher` …) | Existing receivers keep working |
 | Link prefetch off | Prefetching every route crowded out API calls on the browser's 6-connection limit (found in the walkthrough: saves took 7 s) |
 
 ## Status (13 layers)
@@ -37,7 +41,7 @@ Personal use on your own machine ("enterprise level" features, not a public rele
 |---|---|
 | Frontend | ✅ 24 pages with loading/empty/error states, light/dark, phone width, command palette (Ctrl K), URL-kept tabs and filters |
 | APIs | ✅ 80 route files, Zod validation, one error format with request id and field errors, rate limits, Bearer tokens |
-| Database | ✅ 5 numbered migrations (AI log, cache, memory), `secure_delete`, indexes, retention pruning every 6 h |
+| Database | ✅ 6 numbered migrations (AI log, cache, memory; operations: versions, issues, repairs, deliveries, saved views, triage), `secure_delete`, indexes, retention pruning every 6 h |
 | Auth | ✅ optional password (signed cookie) + API tokens; ➖ multi-user not needed |
 | Hosting | ⏳ VPS steps documented in RUNBOOK |
 | Compute / jobs | ✅ job queue with concurrency, per-site turns, cancel/retry, crash recovery; scheduler with leases; interval or cron |
@@ -46,25 +50,29 @@ Personal use on your own machine ("enterprise level" features, not a public rele
 | Rate limiting | ✅ per endpoint + per host + AI daily cap |
 | Caching | ➖ local app; static assets cached by Next.js |
 | Scaling | ⏳ worker process + Postgres when needed |
-| Observability | ✅ JSON logs, Logs page (audit log), per-job logs, Sites stats, health endpoint with version |
+| Observability | ✅ Operations page, per-task Health tab with anomaly band, failure reports with screenshots, health alerts, delivery log, JSON logs, audit log, per-job logs, Sites stats, health endpoint |
 | Recovery | ✅ daily backups with retention, download, restore steps, setup export/import, JSON export |
 
 ## Tests
-`npm test`: 133 tests across 10 files. New this round (`tests/ai-gateway.test.ts`): per-provider keys and headers, fallback on outage, JSON-mode adaptation, cache, monthly budget, secret masking, legacy migration, page context, typed AI extraction with link references and grounding, category plan and run, private mode leaving no rows, timeline and wipe. Earlier: extraction, task engine (pagination, detail pages, crawl, inputs, quality, new/removed rows), watchers (all target types, rules, noise filters, visual diff), deals and scores, politeness (robots.txt, backoff, bot-check stop, SSRF guard), AI (agent tool loop, follow-ups, stop, Build with AI, daily cap) against a mock OpenAI-compatible server, ops (tokens, backups, config import/export, secret masking), and the line diff.
+`npm test`: 148 tests across 11 files. New in the enterprise round (`tests/enterprise.test.ts`): data checks (suggest, score, mostly, severity), failure reports by cause, usual-range learning, error grouping, versions and restore, issues opening and resolving across runs with one alert each, health alert once per problem and recovery, AI repair checked against the last good run and applied in auto mode (and rejected when items don't match), change triage and ignore-from-feedback keeping history, briefings with AI summary, webhook signing, retries, delivery log and redeliver, Google Sheets replace and upsert against a mock Google with real JWT signatures, MCP initialize/list/call with write gating, saved views. Earlier (133): New this round (`tests/ai-gateway.test.ts`): per-provider keys and headers, fallback on outage, JSON-mode adaptation, cache, monthly budget, secret masking, legacy migration, page context, typed AI extraction with link references and grounding, category plan and run, private mode leaving no rows, timeline and wipe. Earlier: extraction, task engine (pagination, detail pages, crawl, inputs, quality, new/removed rows), watchers (all target types, rules, noise filters, visual diff), deals and scores, politeness (robots.txt, backoff, bot-check stop, SSRF guard), AI (agent tool loop, follow-ups, stop, Build with AI, daily cap) against a mock OpenAI-compatible server, ops (tokens, backups, config import/export, secret masking), and the line diff.
 
 A full browser walkthrough was run with Playwright against a local fixture site and a mock model (`/tmp` scripts, not in the repo): every page, the main flows end to end, phone width (390 px) and dark mode. Bugs it found and that are fixed: auto mode showing a 1-item structured-data list before the 5-card list; duplicate job log lines from overlapping polls; channel test errors returning 500 instead of a clear message; proxy errors not shown on the field; bookmarklets blocked by React's `javascript:` URL guard; charts scaling their text down to unreadable sizes in narrow cards; broken product images showing alt text; duplicate tab element ids when a dialog has its own tabs; site rules able to make a site faster than the default; "1 rows"/"1 checks" wording and uneven discount decimals; health check missing the version.
 
 The AI upgrade was walked through the same way (18 flows: provider setup with Load models and Test, routing and fallbacks, memory, privacy wipe, category plan and run, save as task, agent approval, private agent chat, AI log transcript, timeline, Fix with AI, run compare, task AI columns, AI extract columns, private-mode indicator, phone width). Bugs it found and that are fixed: small pages lost their headings in the model's context; the capability test marked models "no tools" when they simply chose not to call the test tool; saves stalling behind route prefetching; selector inputs too narrow on the category plan.
+
+The enterprise round was walked through in the browser too (Health tab, Checks with suggestions, a site redesign producing a failure report and an AI repair, Versions, the data grid with filters, pins and a saved view, Operations, the Changes inbox with AI importance and a briefing, Integrations with the MCP test, webhook test and delivery log, briefing settings, the task editor, phone width in dark mode). Bugs it found and that are fixed: the briefing preview re-requesting itself until rate-limited; "from undefined good runs" on the Health tab; a double full stop in the repair banner.
 
 ## Known issues / not verified
 - Not tested against live Amazon or other public sites from the build environment (its network blocks outside sites). Amazon selectors follow Amazon's current public markup and may need updates when Amazon changes its layout.
 - Email, Telegram, Discord, Slack and ntfy were tested for their error paths and payloads, not against the real services.
 - Desktop notifications appear only while a Scaper tab is open.
 - The AI features were tested against a mock OpenAI-compatible server, not real providers. Providers differ in small ways; the client adapts to the common ones (JSON mode, `max_completion_tokens`, temperature), and **Test** shows what a model supports.
+- Google Sheets sync was tested against a mock of Google's token and Sheets endpoints, not the real API.
+- A run whose selectors find nothing still counts as "ok" in success rates; its failure report and data score show the problem.
 - Editing the model routing while a provider save is still in flight can be overwritten by the save's result.
 
 ## Next steps (in order)
 1. Connect a GitHub repo and push (CI file is ready).
-2. Google Sheets export for tasks.
+2. Team features if Scaper moves to a server: users, roles, per-user audit.
 3. Amazon Creators API integration (needs an Associates account).
 4. Nonce-based CSP, then VPS deploy behind Caddy.

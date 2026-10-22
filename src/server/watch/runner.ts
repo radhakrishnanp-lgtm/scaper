@@ -13,7 +13,7 @@ import { deliver } from "../notify";
 import { audit } from "../repo/events";
 import { getSettings } from "../repo/settings";
 import {
-  addSnapshot, latestScreenshot, latestSnapshot, markErrorAlerted, recordCheck, touchSnapshot,
+  addIgnoreLines, addSnapshot, latestScreenshot, latestSnapshot, markErrorAlerted, notUsefulExamples, rebaseLatest, recordCheck, touchSnapshot,
   type ConditionResult, type DiffSummary, type Verdict, type Watcher,
 } from "../repo/watchers";
 import { newId } from "../repo/util";
@@ -131,6 +131,37 @@ async function aiSummary(summary: string) {
     { model: "fast", temperature: 0, maxTokens: 80, purpose: "watcher" },
   );
   return res.content.trim().split("\n")[0]!.slice(0, 300);
+}
+
+const importanceSchema = z.object({ important: z.boolean(), summary: z.string().max(400).default("") });
+
+/**
+ * Change triage by your AI: is this change important to you, in one sentence what changed. It sees the
+ * watcher's purpose (name, tags, AI rule) and the changes you marked "not useful", so it learns your taste.
+ */
+async function judgeChange(w: Watcher, change: string, after: string) {
+  const notUseful = notUsefulExamples(w.id);
+  const question = [w.condition, ...w.options.moreConditions].find((c) => c.type === "ai");
+  const res = await chat(
+    [
+      { role: "system", content: `You triage website changes for the user. Decide whether this change is important to them, and summarize it in one plain sentence of at most 25 words. Routine noise (dates, counters, ads, reordered items, session tokens) is not important. Changes similar to ones the user marked "not useful" are not important. Reply with JSON {"important": true|false, "summary": "..."}. ${UNTRUSTED_NOTE}` },
+      { role: "user", content: `Watcher: ${w.name} (${w.url})${w.tags.length ? `\nTags: ${w.tags.join(", ")}` : ""}${question && question.type === "ai" ? `\nThe user wants to know: ${question.question}` : ""}${notUseful.length ? `\nChanges the user marked not useful before:\n${notUseful.map((n) => `- ${n}`).join("\n")}` : ""}\n<page>\nCHANGE:\n${change}\n\nCURRENT CONTENT (start):\n${after.slice(0, 4000)}\n</page>` },
+    ],
+    { model: "fast", json: true, temperature: 0, maxTokens: 200, purpose: "watcher" },
+  );
+  return importanceSchema.parse(parseJsonReply(res.content));
+}
+
+/** "Not useful" → ignore these lines from now on, without losing history or reporting a change next time. */
+export function ignoreFromFeedback(watcherId: string, lines: string[]) {
+  const w = addIgnoreLines(watcherId, lines);
+  if (!w) return null;
+  const latest = latestSnapshot(w.id);
+  if (latest) {
+    const content = applyFilters(latest.content, w.ignore_lines, w.options);
+    rebaseLatest(w.id, content, hashOf(compareKey(content, w.options)));
+  }
+  return w;
 }
 
 export type CheckOutcome = {
@@ -252,8 +283,25 @@ export async function checkWatcher(w: Watcher, hooks: Hooks = {}): Promise<Check
     const ev = combine(evals, o.match, Boolean(prev?.triggered));
     const results: ConditionResult[] = conditions.map((c, i) => ({ type: c.type, met: evals[i]!.met, reason: evals[i]!.reason }));
 
+    // Triage: important or not (your AI, or "did the rule match"), and a one-line summary.
+    let important: boolean | null = null;
+    let summaryText: string | null = null;
+    if (significant) {
+      const changeText = diff ? summarizeDiff(diff, 20) : `Visual change of ${visualChange ?? "?"}%`;
+      if (o.aiImportance) {
+        const j = await judgeChange(w, changeText, cur.content).catch((e: Error) => { log("warn", `AI triage failed: ${e.message}`); return null; });
+        if (j) { important = j.important; summaryText = j.summary.trim() || null; }
+      }
+      if (!summaryText && o.aiSummary && diff) summaryText = await aiSummary(summarizeDiff(diff, 20)).catch(() => null);
+      important ??= ev.met;
+    }
+
     let notify = ev.notify;
     let suppressed: string | undefined;
+    if (notify && o.aiImportance && o.importantOnly && important === false) {
+      notify = false;
+      suppressed = "Your AI judged this change not important, so no alert was sent.";
+    }
     if (notify && o.cooldownMinutes && w.last_notified_at && Date.now() - Date.parse(w.last_notified_at) < o.cooldownMinutes * 60_000) {
       notify = false;
       suppressed = `In the ${o.cooldownMinutes}-minute quiet period after the last alert.`;
@@ -269,7 +317,7 @@ export async function checkWatcher(w: Watcher, hooks: Hooks = {}): Promise<Check
       if (page?.capture && (visual || !prev || changed)) screenshot = await saveMedia(`watchers/${w.id}/${snapshotId}.png`, page.capture);
       savedId = addSnapshot({
         id: snapshotId, watcherId: w.id, content: cur.content, hash, value: cur.value, changed, triggered: ev.met, diff,
-        screenshot, visualDiff, visualChange, verdict, statusCode, responseMs,
+        screenshot, visualDiff, visualChange, verdict, statusCode, responseMs, important, summary: summaryText,
       });
     }
 
@@ -277,12 +325,9 @@ export async function checkWatcher(w: Watcher, hooks: Hooks = {}): Promise<Check
       const parts = [ev.reason];
       if (visualChange !== null && visualChanged) parts.push(`${visualChange}% of the ${"selector" in w.target && w.target.selector ? "element" : "page"} looks different.`);
       if (diff && !["below", "above"].includes(w.condition.type)) parts.push(summarizeDiff(diff));
-      if (o.aiSummary && diff) {
-        const s = await aiSummary(summarizeDiff(diff, 20)).catch(() => null);
-        if (s) parts.unshift(`AI: ${s}`);
-      }
+      if (summaryText) parts.unshift(`AI: ${summaryText}`);
       const image = visualDiff ? await readMedia(visualDiff) : screenshot ? await readMedia(screenshot) : null;
-      await deliver({ kind: "watcher", title: w.name, body: parts.filter(Boolean).join("\n"), url: w.url, watcherId: w.id, data: { value: cur.value, condition: w.condition.type, snapshotId: savedId }, image }, w.notify);
+      await deliver({ kind: "watcher", title: w.name, body: parts.filter(Boolean).join("\n"), url: w.url, watcherId: w.id, data: { value: cur.value, condition: w.condition.type, snapshotId: savedId, important, summary: summaryText }, image }, w.notify);
       log("info", "Alert sent.");
     } else if (suppressed) {
       log("info", suppressed);

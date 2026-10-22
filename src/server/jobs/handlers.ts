@@ -1,7 +1,6 @@
 import "server-only";
 import { taskOptionsSchema, type ExtractSpec, type FetchMode } from "@/lib/schemas";
 import { runDealSearch, refreshProduct, trackProduct } from "../deals/tracker";
-import { deliver } from "../notify";
 import { createBackup, pruneBackups } from "../ops/backup";
 import { getProduct } from "../repo/products";
 import { getRecipe, recordRecipeRun, type ScrapeRun } from "../repo/scrapes";
@@ -9,6 +8,8 @@ import { getSettings } from "../repo/settings";
 import { getWatcher } from "../repo/watchers";
 import { runTask } from "../tasks/engine";
 import { checkWatcher } from "../watch/runner";
+import { syncRunToSheet } from "../integrations/sheets";
+import { runHeal } from "../ops/heal";
 import { jobFailure, registerJobHandler, type JobContext } from "./queue";
 
 const hooks = (ctx: JobContext) => ({ signal: ctx.signal, log: ctx.log, progress: ctx.progress });
@@ -17,6 +18,8 @@ function runSummary(run: ScrapeRun) {
   return {
     runId: run.id, status: run.status, rows: run.row_count, pages: run.page_count, durationMs: run.duration_ms,
     files: run.result?.files ?? [], issues: run.result?.quality?.issues ?? [],
+    diagnosis: run.diagnosis ? { code: run.diagnosis.code, title: run.diagnosis.title, action: run.diagnosis.action ?? null } : null,
+    validation: run.validation,
     monitor: run.result?.monitor ? { added: run.result.monitor.added, removed: run.result.monitor.removed } : null,
   };
 }
@@ -42,13 +45,24 @@ export function registerHandlers() {
     // Scheduled runs always leave a CSV behind unless the task chose its own formats.
     const options = scheduled && !r.options.output.files.length ? { ...r.options, output: { ...r.options.output, files: ["csv" as const] } } : r.options;
     ctx.log("info", `Running task "${r.name}".`);
-    const run = await runTask({ url: r.url, mode: r.mode, extract: r.extract, options, recipeId: r.id, taskName: r.name, jobId: ctx.job.id }, hooks(ctx));
+    // Failure alerts (grouped into one per problem) and repairs happen after the run; see ops/after-run.
+    const run = await runTask({ url: r.url, mode: r.mode, extract: r.extract, options, recipeId: r.id, taskName: r.name, jobId: ctx.job.id, version: r.version, trigger: ctx.job.trigger }, hooks(ctx));
     recordRecipeRun(r.id, run.status);
-    if ((run.status === "error" || run.status === "blocked") && scheduled && ctx.job.attempts >= ctx.job.max_attempts) {
-      await deliver({ kind: "task", title: `Scheduled task failed: ${r.name}`, body: run.error ?? "Unknown error", url: r.url, data: { recipeId: r.id, runId: run.id } }, { ...r.options.monitor.channels, desktop: false });
-    }
     failIfBad(run);
     return runSummary(run);
+  });
+
+  registerJobHandler("heal", async (ctx) => {
+    const { taskId, runId, reason } = ctx.job.input as { taskId: string; runId?: string | null; reason?: string };
+    const out = await runHeal(taskId, runId ?? null, reason ?? "Asked for a repair.", { signal: ctx.signal, log: ctx.log });
+    if (out.status === "failed") throw jobFailure(out.error, { taskId }, true);
+    return { taskId, status: out.status, proposalId: out.proposalId, passed: out.check.passed };
+  });
+
+  registerJobHandler("sheets", async (ctx) => {
+    const { runId } = ctx.job.input as { runId: string };
+    const out = await syncRunToSheet(runId, { log: ctx.log });
+    return out;
   });
 
   registerJobHandler("scrape", async (ctx) => {

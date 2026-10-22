@@ -39,7 +39,7 @@ export function RunStatusBadge({ status }: { status: string | null }) {
 }
 
 export const JOB_KIND_LABEL: Record<string, string> = {
-  task: "Task", scrape: "Scrape", watch: "Watcher check", product: "Price check", deal_search: "Deal search", backup: "Backup", bulk_products: "Bulk add",
+  task: "Task", scrape: "Scrape", watch: "Watcher check", product: "Price check", deal_search: "Deal search", backup: "Backup", bulk_products: "Bulk add", heal: "AI repair", sheets: "Sheets sync",
 };
 
 /** Where a finished job's output lives in the app. */
@@ -51,5 +51,7 @@ export function jobResultHref(j: Job): string | null {
   if (j.kind === "deal_search") return "/deals?tab=searches";
   if (j.kind === "bulk_products") return "/deals";
   if (j.kind === "backup") return "/settings?tab=data";
+  if (j.kind === "heal" && j.ref_id) return `/tasks/${j.ref_id}?view=repairs`;
+  if (j.kind === "sheets") return "/integrations?tab=deliveries";
   return null;
 }

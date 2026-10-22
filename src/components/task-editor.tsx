@@ -152,7 +152,7 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
         limits: { maxPages: Math.min(body.options.limits.maxPages, 5), maxRows: Math.min(body.options.limits.maxRows, 500) },
         sitemap: { ...body.options.sitemap, limit: Math.min(body.options.sitemap.limit, 5) },
         pagination: body.options.pagination.type === "next" || body.options.pagination.type === "click" ? { ...body.options.pagination, maxPages: Math.min(body.options.pagination.maxPages, 3) } : body.options.pagination,
-        output: { files: [], webhook: false }, incremental: false,
+        output: { ...body.options.output, files: [], webhook: false, sheets: { ...body.options.output.sheets, enabled: false } }, incremental: false,
         monitor: { ...body.options.monitor, enabled: false }, quality: { ...body.options.quality, alert: false },
       };
       const res = await api<{ run: RunView | null; job: { error: string | null; status: string } }>("/api/scrape", { body: { url: body.url, mode: body.mode, extract: body.extract, options } });
@@ -395,6 +395,16 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
                 </div>
                 <Switch label="Alert me when a check fails" checked={o.quality.alert} onChange={(v) => setOpt("quality", { ...o.quality, alert: v })} description="Uses the channels chosen on Alerts & output." />
               </Section>
+              <Section title="Data checks and scoring" description="Expectations like “price is a number between 1 and 100 000” or “status is In stock or Out of stock”, a score per run, and issues that open and resolve.">
+                <p className="text-sm text-muted">
+                  {o.validation.rules.length ? `${o.validation.rules.length} checks set up. ` : "No detailed checks yet. "}
+                  {id ? <Link prefetch={false} href={`/tasks/${id}?view=checks`} className="font-medium text-accent hover:underline">Edit them on the Checks tab</Link> : "Save the task and run it once, then add checks on its Checks tab (Scaper or your AI can suggest them)."}
+                </p>
+              </Section>
+              <Section title="When the site changes" description="If the selectors stop finding data, your AI proposes new ones and Scaper tests them against the page and the last good run.">
+                <Segmented label="Repair" value={o.heal.mode} onChange={(v) => setOpt("heal", { mode: v })} options={[{ value: "off", label: "Off" }, { value: "ask", label: "Prepare, I decide" }, { value: "auto", label: "Apply if checks pass" }]} />
+                <p className="text-xs text-muted">{o.heal.mode === "auto" ? "A repair that passes every check is saved as a new version (you can roll back) and the task runs again." : o.heal.mode === "ask" ? "Repairs wait on the task's Repairs tab for you to apply." : "Nothing happens automatically."} Needs AI set up; at most one attempt every 6 hours.</p>
+              </Section>
               <Section title="Extras">
                 <Switch label="Add a source URL column" description="Each row gets the page it came from." checked={o.includeSourceUrl} onChange={(v) => setOpt("includeSourceUrl", v)} />
                 <Switch label="Only new detail pages" description={o.detail.enabled ? "Skip items already opened by an earlier run. Saves time on big lists." : "Turn on detail pages (Extract tab) to use this."} checked={o.incremental} onChange={(v) => setOpt("incremental", v)} disabled={!o.detail.enabled} />
@@ -417,7 +427,16 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
                   </div>
                 )}
               </Section>
-              <Section title="Send alerts to" description="For new/removed rows and failed quality checks.">
+              <Section title="Health alerts" description="One alert when a problem starts and one when it's fixed, for scheduled and API runs.">
+                <div className="grid max-w-2xl gap-3 sm:grid-cols-3">
+                  <Field label="Failed runs in a row">{(p) => <Input {...p} type="number" min={1} max={20} value={o.health.failStreak} onChange={(e) => setOpt("health", { ...o.health, failStreak: Math.max(1, Number(e.target.value) || 1) })} />}</Field>
+                  <Field label="Fewer rows than" hint="Empty = off">{(p) => <Input {...p} type="number" min={0} value={o.health.minRows ?? ""} onChange={(e) => setOpt("health", { ...o.health, minRows: e.target.value === "" ? null : Number(e.target.value) })} />}</Field>
+                  <Field label="Slower than (s)" hint="Empty = off">{(p) => <Input {...p} type="number" min={1} value={o.health.maxDurationSeconds ?? ""} onChange={(e) => setOpt("health", { ...o.health, maxDurationSeconds: e.target.value === "" ? null : Number(e.target.value) })} />}</Field>
+                </div>
+                <Switch label="Unusual row count" description="Alert when a run finds far fewer rows than usual. Scaper learns the usual range from the last good runs (needs 5)." checked={o.health.anomaly} onChange={(v) => setOpt("health", { ...o.health, anomaly: v })} />
+                <Switch label="Tell me when it's healthy again" checked={o.health.recovered} onChange={(v) => setOpt("health", { ...o.health, recovered: v })} />
+              </Section>
+              <Section title="Send alerts to" description="For new/removed rows, failed quality checks and health alerts.">
                 <ChannelPicker value={o.monitor.channels} onChange={(v) => setOpt("monitor", { ...o.monitor, channels: v })} />
               </Section>
               <Section title="Output" description="Every run is always kept on the Data page. These are extra copies.">
@@ -427,7 +446,22 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
                   ))}
                 </div>
                 <p className="text-xs text-muted">Files go to <code className="font-mono">data/exports/&lt;task name&gt;/</code>, one file per run.</p>
-                <Switch label="Send rows to my webhook" description="POSTs JSON to the webhook URL from Settings → Alerts after each run." checked={o.output.webhook} onChange={(v) => setOpt("output", { ...o.output, webhook: v })} />
+                <Switch label="Send rows to my webhooks" description={<>POSTs signed JSON after each run (and a task.failed event when it fails) to the endpoints in <Link prefetch={false} href="/integrations?tab=webhooks" className="text-accent hover:underline">Integrations</Link>.</>} checked={o.output.webhook} onChange={(v) => setOpt("output", { ...o.output, webhook: v })} />
+                <div className="space-y-3 rounded-xl border border-border p-3">
+                  <Switch label="Sync to Google Sheets" description="Writes the rows into a sheet after each good run. Set up the service account in Integrations → Google Sheets." checked={o.output.sheets.enabled} onChange={(v) => setOpt("output", { ...o.output, sheets: { ...o.output.sheets, enabled: v } })} />
+                  {o.output.sheets.enabled && (
+                    <div className="grid gap-3 md:grid-cols-[1fr_160px_180px]">
+                      <Field label="Spreadsheet link or ID">{(p) => <Input {...p} className="font-mono text-xs" value={o.output.sheets.spreadsheet} onChange={(e) => setOpt("output", { ...o.output, sheets: { ...o.output.sheets, spreadsheet: e.target.value } })} placeholder="https://docs.google.com/spreadsheets/d/…" />}</Field>
+                      <Field label="Tab">{(p) => <Input {...p} value={o.output.sheets.sheet} onChange={(e) => setOpt("output", { ...o.output, sheets: { ...o.output.sheets, sheet: e.target.value } })} placeholder="Sheet1" />}</Field>
+                      <Field label="Mode">{(p) => <Select {...p} value={o.output.sheets.mode} onChange={(e) => setOpt("output", { ...o.output, sheets: { ...o.output.sheets, mode: e.target.value as "append" | "upsert" | "replace" } })}><option value="upsert">Update rows by key</option><option value="append">Add new rows</option><option value="replace">Replace the tab</option></Select>}</Field>
+                      {o.output.sheets.mode === "upsert" && (
+                        <Field label="Key columns" hint="Rows with the same key are updated in place. Empty = the compare-runs key." className="md:col-span-3">
+                          {(p) => <TagInput id={p.id} value={o.output.sheets.keyFields} onChange={(v) => setOpt("output", { ...o.output, sheets: { ...o.output.sheets, keyFields: v } })} suggestions={fieldNames} max={5} placeholder="link" />}
+                        </Field>
+                      )}
+                    </div>
+                  )}
+                </div>
               </Section>
             </>
           )}

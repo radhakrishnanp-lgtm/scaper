@@ -4,8 +4,8 @@ import { ephemeral } from "./ephemeral";
 import { newId, now, pageSize, parseJson } from "./util";
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export type JobKind = "task" | "scrape" | "watch" | "product" | "deal_search" | "backup" | "bulk_products";
-export type JobTrigger = "manual" | "schedule" | "api" | "agent" | "retry";
+export type JobKind = "task" | "scrape" | "watch" | "product" | "deal_search" | "backup" | "bulk_products" | "heal" | "sheets";
+export type JobTrigger = "manual" | "schedule" | "api" | "agent" | "retry" | "auto" | "repair" | "mcp";
 export type JobProgress = { done?: number; total?: number; rows?: number; label?: string };
 
 type JobRow = {

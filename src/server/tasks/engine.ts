@@ -6,13 +6,20 @@ import type { Cell, Dataset, PageLog, ScrapeResult } from "@/lib/types";
 import { aiExtract, enrichRows } from "../ai/extract";
 import { env } from "../env";
 import { autoExtract } from "../extract/auto";
-import { absolutize, load, safeSelect } from "../extract/dom";
+import { absolutize, load, readableText, safeSelect } from "../extract/dom";
 import { extractWithSelectors } from "../extract/selectors";
 import { serializeDataset } from "../export/formats";
 import { fetchPage, FetchError } from "../fetcher";
-import { deliver, sendWebhookPayload } from "../notify";
+import { emitWebhook } from "../integrations/webhooks";
+import { deliver } from "../notify";
+import { afterTaskRun } from "../ops/after-run";
+import { diagnoseRun, expectedRange, type DiagnoseInput } from "../ops/diagnose";
+import { isPrivate } from "../privacy";
+import { newId } from "../repo/util";
+import { saveMedia } from "../watch/visual";
+import { runValidation, type ValidationReport } from "@/lib/validation";
 import { audit } from "../repo/events";
-import { lastGoodRun, markSeen, saveRun, seenKeys, type RunStatus, type ScrapeRun } from "../repo/scrapes";
+import { lastGoodRun, markSeen, recentGoodCounts, saveRun, seenKeys, type RunStatus, type ScrapeRun } from "../repo/scrapes";
 import { csvRecords, fillTemplate } from "@/lib/csv";
 import type { BrowserStep } from "@/lib/schemas";
 import { compilePatterns, matchesAny, normalizeForVisit, parseSitemap, parseUrlList } from "./urls";
@@ -24,6 +31,8 @@ export function errorMessage(e: unknown) {
 export type TaskRunInput = {
   url: string; mode: FetchMode; extract: ExtractSpec; options?: TaskOptions; screenshot?: boolean;
   recipeId?: string | null; taskName?: string; jobId?: string | null;
+  /** The task's setup version this run uses, and what started it (manual, schedule, api, repair). */
+  version?: number | null; trigger?: string;
 };
 export type RunHooks = {
   signal?: AbortSignal;
@@ -177,6 +186,10 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
   const notes: string[] = [];
   let first: Pick<ScrapeResult, "title" | "finalUrl" | "meta" | "suggestions" | "screenshot"> | null = null;
   let firstError: string | null = null;
+  let firstErr: DiagnoseInput["error"] = null;
+  let evidence: string | null = null;
+  let firstHtml: string | null = null;
+  let firstText: string | null = null;
   let blocked = false;
   let cancelled = false;
   let fetched = 0;
@@ -197,6 +210,8 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
     try {
       const page = await fetchPage(item.url, input.mode, {
         screenshot: !first && input.screenshot,
+        // A screenshot of the first page, kept only if the run needs a failure report.
+        evidence: browser && !first && !evidence,
         scroll: browser && (pagination.type === "none" || pagination.type === "next"),
         steps: browser ? withVars(o.steps, item.vars) : undefined,
         pagination: item.depth === 0 ? browserPagination : undefined,
@@ -273,7 +288,12 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
         }
       }
       mergeInto(merged, pageSets);
-      if (!first) first = { title: page.title, finalUrl: page.finalUrl, meta, suggestions, screenshot: page.screenshot };
+      if (!first) {
+        first = { title: page.title, finalUrl: page.finalUrl, meta, suggestions, screenshot: input.screenshot ? page.screenshot : undefined };
+        if (browser && page.screenshot) evidence = page.screenshot;
+        firstHtml = htmls[0] ?? null;
+        firstText = page.text ?? null;
+      }
       okPages++;
 
       // Pagination by following the "next" link.
@@ -305,6 +325,8 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
       if (isCancelError(e, hooks.signal)) { cancelled = true; break; }
       const msg = errorMessage(e);
       firstError ??= msg;
+      firstErr ??= { code: e instanceof FetchError ? e.code : "unknown", status: e instanceof FetchError ? e.status ?? null : null, message: msg, url: item.url };
+      if (e instanceof FetchError && e.evidence && !evidence) evidence = e.evidence;
       if (pages.length < MAX_PAGE_LOGS) pages.push({ url: item.url, status: isBlockedError(e) ? "blocked" : "error", rows: 0, ms: Date.now() - t0, depth: item.depth, error: msg });
       log(isBlockedError(e) ? "warn" : "error", `Page ${fetched} failed: ${item.url}: ${msg}`);
       // A bot check or robots refusal means "stop", not "try the next page".
@@ -356,6 +378,16 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
     }
   }
 
+  // Validation rules and the usual row range (from recent good runs).
+  let validation: ValidationReport | null = null;
+  if (result && main && okPages && o.validation.rules.some((r) => r.enabled)) {
+    validation = runValidation(main, o.validation.rules);
+    result.validation = validation;
+    log(validation.status === "fail" ? "warn" : "info", `Data checks: ${validation.counts.pass} passed, ${validation.counts.warn} warning(s), ${validation.counts.fail} failed (score ${validation.score ?? "—"}).`);
+  }
+  const expected = input.recipeId && !isPrivate() ? expectedRange(recentGoodCounts(input.recipeId)) : null;
+  if (result) result.expected = expected;
+
   // What's new since the previous run of this task.
   if (result && main && input.recipeId && o.monitor.enabled && (status === "ok" || status === "partial")) {
     const prev = lastGoodRun(input.recipeId);
@@ -390,18 +422,39 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
     log("info", `Saved ${result.files.join(", ")}.`);
   }
 
+  // Failure report: cause, evidence and the next step.
+  const failedPages = pages.filter((p) => p.status === "error" || p.status === "blocked").length;
+  const diagnosis = diagnoseRun({
+    status, mode: input.mode, extractType: input.extract.type, rows: rowCount, okPages, failedPages, fetched, error: firstErr,
+    hasSteps: o.steps.length > 0, aiFallbackPages, validation, expected, url: input.url,
+    firstHtml, firstText: firstText ?? (firstHtml && !rowCount ? readableText(load(firstHtml)) : null),
+  });
+  if (diagnosis) {
+    if (evidence && !isPrivate()) diagnosis.screenshot = await saveMedia(`runs/${newId()}.jpg`, Buffer.from(evidence, "base64")).catch(() => null);
+    if (result) result.diagnosis = diagnosis;
+    log(diagnosis.severity === "error" ? "warn" : "info", `Diagnosis: ${diagnosis.title}.`);
+  }
+
   const run = saveRun({
     recipe_id: input.recipeId ?? null, job_id: input.jobId ?? null, url: input.url, final_url: first?.finalUrl ?? null, mode: input.mode, status,
     extract: input.extract, result, row_count: rowCount, page_count: fetched, error: status === "ok" ? null : cancelled ? "Cancelled." : firstError,
-    duration_ms: Date.now() - started,
+    duration_ms: Date.now() - started, version: input.version ?? null, diagnosis, score: validation?.score ?? null,
+    validation: validation ? { status: validation.status, score: validation.score, failed: validation.counts.fail, warned: validation.counts.warn } : null,
   });
 
+  if (input.recipeId && !isPrivate()) {
+    await afterTaskRun({ run, input, options: o, validation, expected, aiFallbackPages, log }).catch((e: Error) => log("warn", `Health checks failed: ${e.message}`));
+  }
+
   if (o.output.webhook && result && main) {
-    await sendWebhookPayload({
-      event: "scaper.task.finished", task: { id: input.recipeId ?? null, name: input.taskName ?? null },
-      run: { id: run.id, status, rows: rowCount, pages: fetched, url: input.url }, columns: main.columns, rows: main.rows.slice(0, 500),
+    await emitWebhook("task.finished", {
+      task: { id: input.recipeId ?? null, name: input.taskName ?? null },
+      run: { id: run.id, status, rows: rowCount, pages: fetched, url: input.url, score: run.score ?? null }, columns: main.columns, rows: main.rows.slice(0, 500),
       monitor: result.monitor ? { added: result.monitor.added, removed: result.monitor.removed } : null,
-    }).then(() => log("info", "Sent the webhook.")).catch((e: Error) => log("warn", `Webhook failed: ${e.message}`));
+      validation: result.validation ? { status: result.validation.status, score: result.validation.score } : null,
+    }, { refId: input.recipeId ?? null }).then((rs) => {
+      for (const r of rs) log(r.ok ? "info" : "warn", r.ok ? `Sent the webhook to ${r.target}.` : `Webhook to ${r.target} failed: ${r.error}${r.retrying ? " (will retry)" : ""}`);
+    }).catch((e: Error) => log("warn", `Webhook failed: ${e.message}`));
   }
 
   hooks.progress?.({ done: fetched, total: fetched, rows: rowCount, label: "Finished" });

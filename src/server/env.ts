@@ -10,6 +10,9 @@ const schema = z
     PLAYWRIGHT_EXECUTABLE_PATH: z.string().optional().default(""),
     SCAPER_SCHEDULER: z.enum(["on", "off"]).default("on"),
     SCAPER_ALLOWED_HOSTS: z.string().optional().default(""),
+    // Google endpoints for Sheets sync (overridable for tests and corporate proxies).
+    SCAPER_GOOGLE_TOKEN_URL: z.string().url().default("https://oauth2.googleapis.com/token"),
+    SCAPER_SHEETS_API_URL: z.string().url().default("https://sheets.googleapis.com/v4"),
   })
   .superRefine((v, ctx) => {
     if (v.SCAPER_APP_PASSWORD && v.SCAPER_SESSION_SECRET.length < 32) {

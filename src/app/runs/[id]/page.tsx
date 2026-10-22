@@ -100,7 +100,12 @@ function RunDetail({ id }: { id: string }) {
               {job.progress.rows !== undefined && <p className="mt-1.5 text-xs text-muted">{plural(job.progress.rows, "row")} so far</p>}
             </Card>
           )}
-          {job.error && <Callout tone="danger" title={job.status === "cancelled" ? "Cancelled" : "Failed"}>{job.error}</Callout>}
+          {(() => {
+            const d = job.result?.diagnosis as { title: string } | null | undefined;
+            const runId = typeof job.result?.runId === "string" ? job.result.runId : null;
+            if (d && runId) return <Callout tone={job.status === "failed" ? "danger" : "warning"} title={d.title} action={<Link prefetch={false} href={`/history/${runId}`}><Button size="sm" variant="secondary">Open the failure report</Button></Link>}>{job.error ?? "The run finished, but something needs a look."}</Callout>;
+            return job.error ? <Callout tone="danger" title={job.status === "cancelled" ? "Cancelled" : "Failed"}>{job.error}</Callout> : null;
+          })()}
 
           <Card>
             <CardHeader

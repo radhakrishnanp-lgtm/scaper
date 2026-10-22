@@ -43,6 +43,34 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | POST `/api/steps/test` | Try page actions in the browser and get a screenshot | 8/min |
 | GET `/api/schedule/preview?cron=` | Next run times for a cron expression | – |
 
+### Operations, quality and repair
+
+| Method & path | Purpose | Rate limit |
+|---|---|---|
+| GET `/api/operations` | Fleet health: every task and watcher, a 30-day strip, failures grouped by cause, repairs and changes waiting | – |
+| GET `/api/tasks/:id/health` | Success rates, fail streak, p50/p95, usual row range, last 200 runs with failure reports and scores, issues, pending repair | – |
+| PUT `/api/tasks/:id/rules` | Save data checks `{rules, alert: off\|fail\|warn}` (creates a version) | – |
+| POST `/api/tasks/:id/rules/suggest` | Checks that describe the last good run `{ai: false}` (from the data) or `{ai: true}` (your AI, merged with Scaper's) | AI: 6/min |
+| GET `/api/tasks/:id/issues?status=open\|resolved` | Data issues tracked across runs | – |
+| GET `/api/tasks/:id/versions` · GET/POST `/api/tasks/:id/versions/:n` | Every saved setup with who changed it and runs per version · read one · restore it (saved as a new version) | – |
+| GET `/api/tasks/:id/repairs` · POST `/api/tasks/:id/repairs/:pid` | AI repairs (pending, applied, dismissed, failed) with their checks · `{action: apply\|dismiss, runAfter}` | – |
+| POST `/api/tasks/:id/heal` | "Fix with AI" now: returns the checks against the last good run and the proposed `extract`; `{apply, proposalId?}` saves it | 6/min |
+| PATCH `/api/tasks/:id` | Also takes `{heal: off\|ask\|auto}` | – |
+| GET `/api/watchers/:id/versions` · POST `/api/watchers/:id/versions/:n` | Watcher versions · restore | – |
+| GET `/api/changes?status=unreviewed\|important\|all\|not_useful&watcher&tag&q&limit` · POST `/api/changes` | The change inbox with counts · triage `{ids, reviewed?, important?, feedback?: useful\|not_useful}` | – |
+| POST `/api/changes/review-all` · POST `/api/changes/:id/ignore` | Mark all reviewed `{watcherId?}` · "Not useful": ignore `{lines}` on that watcher from now on (history kept) | – |
+| POST `/api/briefing` · GET `/api/briefing/export?days&tags&ai=1&format=md` | Preview or send a briefing `{days, tags?, match?, ai?, send}` · download it as HTML or Markdown | AI: 6/min |
+| GET/POST `/api/views?scope=` · DELETE `/api/views/:id` | Saved table views (columns, widths, pins, filters, sort) per dataset | – |
+
+### Integrations
+
+| Method & path | Purpose | Rate limit |
+|---|---|---|
+| POST `/api/mcp` | MCP (JSON-RPC 2.0, Streamable HTTP, JSON responses): `initialize`, `ping`, `tools/list`, `tools/call`. Needs a Bearer token from other apps. Off switch and "Allow changes" in Integrations → MCP | 120/min |
+| GET `/api/integrations` | Status of MCP, webhooks and Sheets with 7-day delivery counts | – |
+| POST `/api/integrations/webhooks/test` · POST `/api/integrations/sheets/test` | Test an endpoint `{id?, url?, secret?}` · open a sheet `{spreadsheet}` | 20/min |
+| GET `/api/deliveries?kind&status&target&limit` · POST `/api/deliveries/:id/redeliver` · POST `/api/deliveries/retry-failed` | Delivery log with request, response and attempts · send again · retry every failed one | redeliver: 30/min |
+
 ### Jobs (the Runs page)
 
 | Method & path | Purpose |
@@ -108,4 +136,4 @@ Tasks set to "Send rows to my webhook" post their rows when a run finishes (firs
 { "event": "scaper.task.finished", "task": { "id": "…", "name": "Widget catalogue" }, "run": { "id": "…", "status": "ok", "rows": 12, "pages": 15, "url": "https://…" }, "columns": ["title", "link", "price"], "rows": [{ "title": "Widget A", "link": "https://…", "price": "₹500" }], "monitor": { "added": 2, "removed": 0 } }
 ```
 
-When `SCAPER_SESSION_SECRET` is set, requests carry `x-scaper-signature: hex(HMAC-SHA256(secret, body))`.
+Events: `task.finished`, `task.failed` (with the failure report), `task.health`, `watcher.change`, `price`, `alert`. Named endpoints (Integrations → Webhooks) choose which events they get. Every request carries `x-scaper-event` and `x-scaper-delivery` (the same id on every retry, so receivers can drop duplicates). Endpoints with a secret get `x-scaper-signature: hex(HMAC-SHA256(secret, body))`; the default URL in Settings → Alerts is signed with `SCAPER_SESSION_SECRET` when that is set. Failed deliveries are retried after 30 s, 2 min, 10 min, 1 h and 6 h and are kept in the delivery log for 30 days.

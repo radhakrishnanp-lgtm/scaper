@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Bookmark, Bot, Database, EyeOff, Download, FileUp, Globe, HardDrive, Info, KeyRound, Mail, MessageCircle, Plus, Save, Send, ShieldCheck, Smartphone, Trash2, Webhook, Hash } from "lucide-react";
+import { Bell, Bookmark, Bot, Database, EyeOff, Download, FileUp, Globe, HardDrive, Info, KeyRound, Mail, MessageCircle, Newspaper, Plus, Save, Send, ShieldCheck, Smartphone, Trash2, Webhook, Hash } from "lucide-react";
 import { Panel, TestButton, useSection, type S, type SettingsResponse } from "@/components/settings-bits";
 import { AiSettings } from "@/components/ai-settings";
 import { PrivacySettings } from "@/components/privacy-settings";
@@ -11,7 +11,7 @@ import type { ImportReport } from "@/server/ops/config";
 import { CopyButton } from "@/components/data-table";
 import { ConfirmDialog, Dialog } from "@/components/dialog";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Callout, Card, Code, ErrorNote, Field, Input, Kbd, KeyValue, LoadingRows, PageHeader, Select, Switch, Tabs } from "@/components/ui";
+import { Badge, Button, Callout, Card, Code, ErrorNote, Field, Input, Kbd, KeyValue, LoadingRows, PageHeader, Select, Switch, TagInput, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api-client";
 import { bytes, dateTime, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -69,11 +69,28 @@ function AlertsTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
           )}
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Daily digest">{(p) => <Select {...p} value={v.digest} onChange={(e) => s.set({ digest: e.target.value as "off" | "daily" })}><option value="off">Off</option><option value="daily">One summary a day</option></Select>}</Field>
-          {v.digest === "daily" && <Field label="Send at">{(p) => <Select {...p} value={v.digestHour} onChange={(e) => s.set({ digestHour: Number(e.target.value) })}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}</Select>}</Field>}
           <Field label="Alert after failed checks in a row" hint="For watchers and tasks that keep failing.">{(p) => <Input {...p} type="number" min={1} max={50} value={v.failureAlertAfter} onChange={(e) => s.set({ failureAlertAfter: Number(e.target.value) || 1 })} />}</Field>
           <Field label="Repeat a failure alert after (min)">{(p) => <Input {...p} type="number" min={0} value={v.errorAlertCooldownMinutes} onChange={(e) => s.set({ errorAlertCooldownMinutes: Number(e.target.value) || 0 })} />}</Field>
         </div>
+      </Panel>
+
+      <Panel title="Briefing" icon={<Newspaper className="size-4 text-muted" />} description="A summary of what your watchers saw, tasks that need attention and price alerts, sent to your channels on a schedule."
+        footer={<><Link prefetch={false} href="/changes"><Button variant="ghost">Preview in Changes</Button></Link>{saveBtn}</>}>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Send a briefing">{(p) => <Select {...p} value={v.digest} onChange={(e) => s.set({ digest: e.target.value as typeof v.digest })}><option value="off">Never</option><option value="daily">Every day</option><option value="weekly">Every week</option></Select>}</Field>
+          {v.digest === "weekly" && <Field label="On">{(p) => <Select {...p} value={v.digestDay} onChange={(e) => s.set({ digestDay: Number(e.target.value) })}>{["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => <option key={d} value={i}>{d}</option>)}</Select>}</Field>}
+          {v.digest !== "off" && <Field label="At">{(p) => <Select {...p} value={v.digestHour} onChange={(e) => s.set({ digestHour: Number(e.target.value) })}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}</Select>}</Field>}
+        </div>
+        {v.digest !== "off" && (
+          <>
+            <div className="grid gap-4 md:grid-cols-[1fr_200px]">
+              <Field label="Only watchers with these tags" hint="Empty = every watcher.">{(p) => <TagInput id={p.id} label="Briefing tags" value={v.digestTags} onChange={(x) => s.set({ digestTags: x })} placeholder="competitors, pricing" />}</Field>
+              <Field label="Match">{(p) => <Select {...p} value={v.digestTagMatch} onChange={(e) => s.set({ digestTagMatch: e.target.value as "any" | "all" })}><option value="any">Any of the tags</option><option value="all">All of the tags</option></Select>}</Field>
+            </div>
+            <Switch label="Executive summary by your AI" description="3 to 5 bullet points on top, written by your model from the facts in the briefing. Logged in the AI log." checked={v.digestAi} onChange={(x) => s.set({ digestAi: x })} />
+            <Switch label="Skip quiet briefings" description="Don't send one when nothing important changed, no task needs attention and there were no price alerts." checked={v.digestSkipQuiet} onChange={(x) => s.set({ digestSkipQuiet: x })} />
+          </>
+        )}
       </Panel>
 
       <div className="grid gap-6 xl:grid-cols-2">

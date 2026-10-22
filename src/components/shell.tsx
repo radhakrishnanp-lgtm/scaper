@@ -213,7 +213,7 @@ function AlertsPopover() {
 
 function SideNav({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { unread, counts } = useLive();
+  const { unread, counts, inbox } = useLive();
   return (
     <nav aria-label="Main" className="flex flex-col gap-4">
       {NAV.map((g) => (
@@ -222,7 +222,7 @@ function SideNav({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
           <div className="flex flex-col gap-0.5">
             {g.items.map((item) => {
               const on = isActive(item, pathname);
-              const badge = item.href === "/notifications" && unread ? unread : item.href === "/runs" && counts?.running ? counts.running : 0;
+              const badge = item.href === "/notifications" && unread ? unread : item.href === "/runs" && counts?.running ? counts.running : item.href === "/changes" ? inbox : 0;
               return (
                 <Link
                   key={item.href}

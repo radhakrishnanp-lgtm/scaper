@@ -20,13 +20,16 @@ type LiveState = {
   unread: number;
   setUnread: (n: number) => void;
   counts: Counts | null;
+  /** Changes in the inbox not reviewed yet (last 90 days). */
+  inbox: number;
+  setInbox: (n: number) => void;
   active: Job[];
   refreshJobs: () => void;
   subscribe: (fn: (e: LiveEvent) => void) => () => void;
 };
 
 const LiveContext = createContext<LiveState>({
-  connected: false, unread: 0, setUnread: () => undefined, counts: null, active: [], refreshJobs: () => undefined, subscribe: () => () => undefined,
+  connected: false, unread: 0, setUnread: () => undefined, counts: null, inbox: 0, setInbox: () => undefined, active: [], refreshJobs: () => undefined, subscribe: () => () => undefined,
 });
 
 export const useLive = () => useContext(LiveContext);
@@ -51,6 +54,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [unread, setUnread] = useState(0);
   const [counts, setCounts] = useState<Counts | null>(null);
+  const [inbox, setInbox] = useState(0);
   const [active, setActive] = useState<Job[]>([]);
   const listeners = useRef(new Set<(e: LiveEvent) => void>());
 
@@ -59,6 +63,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
   const refreshUnread = useCallback(() => {
     api<{ unread: number }>("/api/notifications?limit=1").then((d) => setUnread(d.unread)).catch(() => undefined);
+    api<{ counts: { unreviewed: number } }>("/api/changes?limit=1").then((d) => setInbox(d.counts.unreviewed)).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -105,7 +110,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <LiveContext.Provider value={{ connected, unread, setUnread, counts, active, refreshJobs, subscribe }}>
+    <LiveContext.Provider value={{ connected, unread, setUnread, counts, inbox, setInbox, active, refreshJobs, subscribe }}>
       {children}
     </LiveContext.Provider>
   );

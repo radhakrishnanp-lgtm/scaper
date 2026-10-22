@@ -3,7 +3,7 @@ import { db } from "../db";
 import { aiModelSchema, aiProviderSchema, settingsSchema, type AiProvider, type Settings } from "@/lib/schemas";
 import { now, parseJson } from "./util";
 
-const SECTIONS = ["ai", "scraping", "notifications", "data"] as const;
+const SECTIONS = ["ai", "scraping", "notifications", "data", "integrations"] as const;
 
 type CacheEntry = { at: number; value: Settings };
 const g = globalThis as unknown as { __scaperSettings?: CacheEntry | null };
@@ -13,7 +13,7 @@ export function getSettings(): Settings {
   const c = g.__scaperSettings;
   if (c && Date.now() - c.at < 1000) return c.value;
   const rows = db().prepare("SELECT key, value FROM settings").all() as { key: string; value: string }[];
-  const raw: Record<string, unknown> = { ai: {}, scraping: {}, notifications: {}, data: {} };
+  const raw: Record<string, unknown> = { ai: {}, scraping: {}, notifications: {}, data: {}, integrations: {} };
   for (const r of rows) raw[r.key] = parseJson(r.value, {});
   const parsed = settingsSchema.parse(raw);
   const value = { ...parsed, ai: withLegacyProvider(parsed.ai) };
@@ -76,6 +76,25 @@ function keepProviderSecrets(incoming: AiProvider[], saved: AiProvider[]): AiPro
   });
 }
 
+type Integrations = Settings["integrations"];
+
+/** Webhook secrets come back masked from the form; masked means "keep the saved value". */
+function keepIntegrationSecrets(next: Integrations, saved: Integrations): Integrations {
+  return {
+    ...next,
+    googleServiceAccount: MASKED.test(next.googleServiceAccount) ? saved.googleServiceAccount : next.googleServiceAccount,
+    webhooks: next.webhooks.map((w) => {
+      const old = saved.webhooks.find((o) => o.id === w.id);
+      return { ...w, secret: MASKED.test(w.secret) ? old?.secret ?? "" : w.secret, url: MASKED.test(decodeURI(w.url)) ? old?.url ?? w.url : w.url };
+    }),
+  };
+}
+
+/** The service account's email, so the settings page can say "share your sheet with …". */
+export function serviceAccountEmail(json: string) {
+  try { return String((JSON.parse(json) as { client_email?: string }).client_email ?? "") || null; } catch { return null; }
+}
+
 export function saveSettings(patch: Partial<{ [K in keyof Settings]: Partial<Settings[K]> }>): Settings {
   const current = getSettings();
   const aiPatch = { ...patch.ai } as Partial<Ai>;
@@ -85,6 +104,7 @@ export function saveSettings(patch: Partial<{ [K in keyof Settings]: Partial<Set
     scraping: { ...current.scraping, ...patch.scraping },
     notifications: { ...current.notifications, ...patch.notifications },
     data: { ...current.data, ...patch.data },
+    integrations: keepIntegrationSecrets({ ...current.integrations, ...patch.integrations }, current.integrations),
   });
   const stmt = db().prepare(
     "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
@@ -128,6 +148,12 @@ export function publicSettings(s: Settings) {
       hasSmtpPass: Boolean(n.smtpPass),
     },
     data: s.data,
+    integrations: {
+      ...s.integrations,
+      webhooks: s.integrations.webhooks.map((w) => ({ ...w, secret: mask(w.secret), url: maskUrl(w.url) })),
+      googleServiceAccount: s.integrations.googleServiceAccount ? "••••••" : "",
+      serviceAccountEmail: serviceAccountEmail(s.integrations.googleServiceAccount),
+    },
   };
 }
 export type PublicSettings = ReturnType<typeof publicSettings>;

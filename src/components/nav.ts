@@ -1,5 +1,5 @@
 import {
-  Activity, Bell, Bot, BrainCircuit, Database, FolderTree, Globe, LayoutDashboard, ListChecks, Radar, ScanSearch, ScrollText, Settings, Tag,
+  Activity, Bell, Bot, BrainCircuit, Database, FolderTree, Gauge, Globe, Inbox, LayoutDashboard, ListChecks, Plug, Radar, ScanSearch, ScrollText, Settings, Tag,
   type LucideIcon,
 } from "lucide-react";
 
@@ -10,7 +10,10 @@ export type NavGroup = { label: string; items: NavItem[] };
 export const NAV: NavGroup[] = [
   {
     label: "Overview",
-    items: [{ href: "/", label: "Dashboard", icon: LayoutDashboard, keywords: "home overview stats", match: (p) => p === "/" }],
+    items: [
+      { href: "/", label: "Dashboard", icon: LayoutDashboard, keywords: "home overview stats", match: (p) => p === "/" },
+      { href: "/operations", label: "Operations", icon: Gauge, keywords: "health uptime failures errors sla monitoring fleet repairs" },
+    ],
   },
   {
     label: "Collect",
@@ -25,6 +28,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Monitor",
     items: [
+      { href: "/changes", label: "Changes", icon: Inbox, keywords: "inbox triage review important briefing digest" },
       { href: "/watchers", label: "Watchers", icon: Radar, keywords: "website change monitor diff visual uptime feed" },
       { href: "/deals", label: "Prices & deals", icon: Tag, keywords: "amazon price tracker keepa deals products" },
       { href: "/notifications", label: "Alerts", icon: Bell, keywords: "notifications inbox" },
@@ -40,6 +44,7 @@ export const NAV: NavGroup[] = [
   {
     label: "System",
     items: [
+      { href: "/integrations", label: "Integrations", icon: Plug, keywords: "mcp claude cursor webhooks google sheets deliveries api" },
       { href: "/sites", label: "Sites", icon: Globe, keywords: "hosts rules cookies headers delay backoff" },
       { href: "/logs", label: "Logs", icon: ScrollText, keywords: "events audit errors" },
       { href: "/settings", label: "Settings", icon: Settings, keywords: "ai keys channels telegram email backups tokens" },

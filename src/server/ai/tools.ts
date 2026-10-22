@@ -17,9 +17,15 @@ import { aiCostThisMonth, aiUsageToday } from "../repo/agent";
 import { createDealSearch, listDealSearches } from "../repo/deal-searches";
 import { audit } from "../repo/events";
 import { deleteProduct, getProductByUrl, listProducts } from "../repo/products";
-import { createRecipe, deleteRecipe, getRecipe, getRun, listRecipes, listRuns, setRecipeSchedulePaused, updateRecipe, validateCron, type Recipe } from "../repo/scrapes";
+import { createRecipe, deleteRecipe, getRecipe, getRun, listRecipes, listRuns, recentGoodCounts, runHistory, setRecipeSchedulePaused, updateRecipe, validateCron, type Recipe } from "../repo/scrapes";
 import { getSiteRule, hostSummaries, upsertSiteRule } from "../repo/sites";
-import { changesSince, createWatcher, deleteWatcher, getWatcher, listWatchers, setWatcherEnabled, type Watcher } from "../repo/watchers";
+import { changesSince, createWatcher, deleteWatcher, getWatcher, listChanges, listWatchers, reviewAll, setWatcherEnabled, triageChanges, type Watcher } from "../repo/watchers";
+import { getJob, jobLogs } from "../repo/jobs";
+import { pendingProposal } from "../repo/heal";
+import { listIssues } from "../repo/quality";
+import { buildBriefing } from "../ops/briefing";
+import { expectedRange } from "../ops/diagnose";
+import { queueHeal } from "../ops/heal";
 import { getSettings } from "../repo/settings";
 import type { AgentBrowser } from "./browser-session";
 import { type ModelChoice, type ToolDef } from "./client";
@@ -271,7 +277,7 @@ export const TOOLS: Record<string, AgentTool> = {
       }
       validateCron(a.cron ? String(a.cron) : null);
       const minutes = Number(a.schedule_minutes ?? 0);
-      const updated = updateRecipe(t.id, taskSchema.parse({ ...t, scheduleMinutes: minutes ? Math.max(15, Math.round(minutes)) : null, cron: a.cron ? String(a.cron) : null }));
+      const updated = updateRecipe(t.id, taskSchema.parse({ ...t, scheduleMinutes: minutes ? Math.max(15, Math.round(minutes)) : null, cron: a.cron ? String(a.cron) : null }), { source: "agent", note: "Schedule changed by the agent" });
       if (typeof a.paused === "boolean") setRecipeSchedulePaused(t.id, a.paused);
       audit("task.updated", { taskId: t.id, by: "agent" });
       return j({ ok: true, schedule: updated ? schedule(updated) : "manual" });
@@ -368,6 +374,79 @@ export const TOOLS: Record<string, AgentTool> = {
     describe: (a) => `Delete the watcher "${short(a.watcher)}" and its history.`,
     def: def("delete_watcher", "Delete a watcher. Only when the user clearly asks.", { watcher: str("Watcher id or name") }, ["watcher"]),
     run: async (a) => { const w = findWatcher(a.watcher); deleteWatcher(w.id); audit("watcher.deleted", { watcherId: w.id, by: "agent" }); return j({ deleted: w.name }); },
+  },
+  task_health: {
+    group: "Tasks & data", changes: false,
+    def: def("task_health", "Health of a saved task: success rate, recent runs, usual row range, the latest failure report (cause and suggested fix), open data issues and any AI repair waiting for review.", { task: str("Task id or exact name") }, ["task"]),
+    run: async (a) => {
+      const task = findTask(a.task);
+      const runs = runHistory(task.id, 50);
+      const good = runs.filter((r) => r.status === "ok" || r.status === "partial");
+      const latest = runs[0];
+      return j({
+        task: task.name, version: task.version, last_status: task.last_status, runs: runs.length,
+        success_rate: runs.length ? Math.round((good.length / runs.length) * 100) : null,
+        usual_rows: expectedRange(recentGoodCounts(task.id)),
+        latest: latest ? { at: latest.created_at, status: latest.status, rows: latest.row_count, score: latest.score, diagnosis: latest.diagnosis ? JSON.parse(latest.diagnosis) : null } : null,
+        open_issues: listIssues(task.id, "open").map((i) => ({ check: i.label, detail: i.detail, since: i.first_seen, runs: i.runs })),
+        pending_repair: pendingProposal(task.id)?.report ?? null,
+        recent: runs.slice(0, 10).map((r) => ({ at: r.created_at, status: r.status, rows: r.row_count, ms: r.duration_ms })),
+      });
+    },
+  },
+  repair_task: {
+    group: "Tasks & data", changes: true,
+    describe: (a) => `Ask the AI to prepare new selectors for "${short(a.task)}" and check them against its last good run${getRecipe(String(a.task))?.options.heal.mode === "auto" ? " (applied automatically if the check passes)" : " (kept for review)"}.`,
+    def: def("repair_task", "When a selectors task broke after a site change: start an AI repair in the background. It proposes new selectors, checks them against the last good run, and either applies them (task set to auto) or keeps them for the user to review. Returns a job id.", { task: str("Task id or exact name") }, ["task"]),
+    run: async (a) => {
+      const task = findTask(a.task);
+      if (task.extract.type !== "selectors") throw new Error("Only tasks that use selectors can be repaired. AI and Auto tasks adapt by themselves.");
+      const job = queueHeal(task, null, "Asked for a repair.");
+      return j({ job_id: job.id, status: job.status });
+    },
+  },
+  job_status: {
+    group: "Scaper", changes: false,
+    def: def("job_status", "Status, progress, result and the last log lines of a background job (task run, repair, watcher check).", { job_id: str("Job id") }, ["job_id"]),
+    run: async (a) => {
+      const job = getJob(String(a.job_id ?? ""));
+      if (!job) throw new Error("No job with that id.");
+      return j({ id: job.id, kind: job.kind, title: job.title, status: job.status, progress: job.progress, result: job.result, error: job.error, log: jobLogs(job.id).slice(-12).map((l) => `${l.level}: ${l.message}`) });
+    },
+  },
+  change_inbox: {
+    group: "Watchers", changes: false,
+    def: def("change_inbox", "Changes detected by the user's watchers with their triage state: important (set by the AI or the user), reviewed, and a one-line summary.", {
+      status: { type: "string", enum: ["all", "unreviewed", "important"], description: "Which changes, default unreviewed" },
+      tag: str("Only watchers with this tag"), limit: num("Max items, default 30"),
+    }),
+    run: async (a) => {
+      const status = (["all", "unreviewed", "important"].includes(String(a.status)) ? a.status : "unreviewed") as "all" | "unreviewed" | "important";
+      const { items } = listChanges({ status, tag: a.tag ? String(a.tag) : undefined, limit: Math.min(100, Number(a.limit ?? 30)) });
+      return j(items.map((c) => ({
+        id: c.id, watcher: c.watcher_name, url: c.watcher_url, at: c.created_at, important: c.important, reviewed: Boolean(c.reviewed_at),
+        summary: c.summary ?? c.diff?.patch.filter((p) => p.op !== " ").slice(0, 3).map((p) => `${p.op} ${p.text.slice(0, 140)}`).join(" / ") ?? null,
+      })));
+    },
+  },
+  review_changes: {
+    group: "Watchers", changes: true,
+    describe: (a) => Array.isArray(a.ids) && a.ids.length ? `Mark ${a.ids.length} change(s) as reviewed.` : "Mark every change as reviewed.",
+    def: def("review_changes", "Mark watcher changes as reviewed, by id (from change_inbox), or all of them.", { ids: { type: "array", items: { type: "string" }, description: "Change ids; leave out to mark all" } }),
+    run: async (a) => {
+      const ids = Array.isArray(a.ids) ? a.ids.map(String).slice(0, 500) : [];
+      return j({ reviewed: ids.length ? triageChanges(ids, { reviewed: true }) : reviewAll() });
+    },
+  },
+  briefing: {
+    group: "Scaper", changes: false,
+    def: def("briefing", "A briefing of everything that changed over the last days: watcher changes (important first), tasks that need attention, data issues, repairs to review and price alerts.", {
+      days: num("Period in days, default 1, max 31"), tags: { type: "array", items: { type: "string" }, description: "Only watchers with these tags" },
+    }),
+    run: async (a) => {
+      const b = await buildBriefing({ days: Math.min(31, Math.max(1, Number(a.days ?? 1))), tags: Array.isArray(a.tags) ? a.tags.map(String) : [], match: "any", ai: false });
+      return clip(b.markdown, 12_000);
+    },
   },
   recent_changes: {
     group: "Watchers", changes: false,
