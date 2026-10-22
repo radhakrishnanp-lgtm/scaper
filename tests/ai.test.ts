@@ -6,13 +6,16 @@ process.env.SCAPER_SCHEDULER = "off";
 const { openDatabase, setDatabaseForTests } = await import("@/server/db");
 setDatabaseForTests(openDatabase(":memory:"));
 const { saveSettings } = await import("@/server/repo/settings");
-const { startAgent } = await import("@/server/ai/agent");
-const { getAgentRun } = await import("@/server/repo/agent");
+const { startAgent, stopAgent } = await import("@/server/ai/agent");
+const { agentThread, deleteAgentRun, getAgentRun } = await import("@/server/repo/agent");
 const { runScrape } = await import("@/server/scrape");
 const { chat } = await import("@/server/ai/client");
 const { listWatchers } = await import("@/server/repo/watchers");
 const { scanListing } = await import("@/server/deals/tracker");
 const { deliver } = await import("@/server/notify");
+const { suggestSelectors } = await import("@/server/ai/suggest");
+const fs = await import("node:fs");
+const path = await import("node:path");
 const http = await import("node:http");
 
 let site: Awaited<ReturnType<typeof startFixtureServer>>;
@@ -23,6 +26,11 @@ beforeAll(async () => {
   llm = await startMockLlm((messages, body) => {
     const last = messages[messages.length - 1]!;
     const user = messages.find((m) => m.role === "user")?.content ?? "";
+    if (body.response_format && JSON.stringify(messages).includes("You write CSS selectors")) {
+      // First a wrong guess; after Scaper reports what matched, a working one.
+      if (!JSON.stringify(messages).includes("I tried it on the page")) return { content: JSON.stringify({ itemSelector: ".product-tile", fields: [{ name: "name", selector: "h3" }] }) };
+      return { content: JSON.stringify({ itemSelector: "#results .card", fields: [{ name: "name", selector: "h2.name" }, { name: "price", selector: ".price" }, { name: "link", selector: "a", attr: "href" }], note: "Cards in the results grid." }) };
+    }
     if (body.response_format && JSON.stringify(messages).includes("shopping analyst")) {
       return { content: JSON.stringify({ picks: [{ index: 1, note: "Small discount but trusted" }, { index: 0, note: "Huge discount, many reviews" }] }) };
     }
@@ -72,6 +80,33 @@ describe("AI agent", () => {
     const w = listWatchers().find((x) => x.name === "Listing");
     expect(w).toMatchObject({ interval_minutes: 30, condition: { type: "contains", text: "In stock" } });
   }, 30_000);
+
+  it("answers follow-ups with the earlier question and answer as context", async () => {
+    const first = await waitFor(startAgent("Which headphone on the listing is cheapest?", true).id);
+    const before = llm.requests.length;
+    const next = await waitFor(startAgent("Is that a good price?", true, first.id).id);
+    expect(next.status).toBe("done");
+    expect(next.parent_id).toBe(first.id);
+    expect(agentThread(next.id).map((r) => r.id)).toEqual([first.id]);
+    const sent = llm.requests[before]!.messages as { role: string; content: string | null }[];
+    expect(sent.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(sent[2]!.content).toContain("Echo Kids Headset");
+    expect(sent[3]!.content).toBe("Is that a good price?");
+    // Deleting the middle of a conversation keeps the later turns attached to the earlier ones.
+    const third = await waitFor(startAgent("Thanks", true, next.id).id);
+    deleteAgentRun(next.id);
+    expect(getAgentRun(third.id)!.parent_id).toBe(first.id);
+  }, 30_000);
+
+  it("stops when asked and never flips back to done", async () => {
+    const run = startAgent("Which headphone on the listing is cheapest?", true);
+    expect(stopAgent(run.id)).toBe(true);
+    expect(getAgentRun(run.id)).toMatchObject({ status: "error", error: "Stopped by you." });
+    await new Promise((r) => setTimeout(r, 2500));
+    const after = getAgentRun(run.id)!;
+    expect(after).toMatchObject({ status: "error", error: "Stopped by you.", answer: null });
+    expect(stopAgent(run.id)).toBe(false);
+  }, 30_000);
 });
 
 describe("AI extraction", () => {
@@ -108,6 +143,18 @@ describe("webhook alerts", () => {
     hook.close();
     expect(n.title).toBe("Price drop");
     expect(received[0]?.body).toMatchObject({ event: "scaper.watcher", title: "Price drop", body: "Now 1,999", data: { value: 1999 } });
+  });
+});
+
+describe("Build with AI", () => {
+  it("proposes selectors, tests them on the page and retries once with feedback", async () => {
+    const html = fs.readFileSync(path.join(import.meta.dirname, "fixtures", "listing.html"), "utf8");
+    const r = await suggestSelectors(html, "https://shop.example/list", "name, price and link of each product");
+    expect(r.attempts).toBe(2);
+    expect(r.itemSelector).toBe("#results .card");
+    expect(r.count).toBe(5);
+    expect(r.rows[0]).toMatchObject({ name: "Aria Wireless Headphones", price_value: 2499, link: "https://shop.example/p/aria" });
+    expect(r.note).toBe("Cards in the results grid.");
   });
 });
 

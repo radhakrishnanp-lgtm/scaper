@@ -18,7 +18,9 @@ const { listNotifications } = await import("@/server/repo/notifications");
 const { trackProduct } = await import("@/server/deals/tracker");
 const { closeBrowser, browserInstalled } = await import("@/server/fetcher/browser");
 const { createRecipe, claimDueRecipes, getRecipe } = await import("@/server/repo/scrapes");
-const { runScheduledRecipe } = await import("@/server/recipes/scheduled");
+const { enqueueAndWait } = await import("@/server/jobs");
+const { getRun } = await import("@/server/repo/scrapes");
+const { extractSchema, taskSchema, watcherSchema } = await import("@/lib/schemas");
 const { fetchPage } = await import("@/server/fetcher");
 const { db } = await import("@/server/db");
 
@@ -63,10 +65,10 @@ describe("scraping end to end (fast mode)", () => {
 describe("watcher end to end", () => {
   it("saves a baseline, detects a price drop, and alerts once", async () => {
     site.pages.set("/watch", { body: `<html><body><h1>Deal</h1><span class="price">₹2,000</span></body></html>` });
-    const w = createWatcher({
+    const w = createWatcher(watcherSchema.parse({
       name: "Fixture price", url: `${site.base}/watch`, mode: "fast", target: { type: "selector", selector: ".price" },
-      condition: { type: "below", value: 1800 }, notify: { desktop: true, webhook: false, telegram: false }, intervalMinutes: 60, enabled: true, ignoreLines: [],
-    });
+      condition: { type: "below", value: 1800 }, notify: { desktop: true }, intervalMinutes: 60,
+    }));
     const first = await checkWatcher(getWatcher(w.id)!);
     expect(first).toMatchObject({ status: "ok", changed: false, triggered: false, value: 2000 });
 
@@ -88,31 +90,35 @@ describe("watcher end to end", () => {
 
   it("an unchanged page does not add snapshots", async () => {
     site.pages.set("/static", { body: "<p>Same</p>" });
-    const w = createWatcher({
+    const w = createWatcher(watcherSchema.parse({
       name: "Static", url: `${site.base}/static`, mode: "fast", target: { type: "page" }, condition: { type: "any_change" },
-      notify: { desktop: false, webhook: false, telegram: false }, intervalMinutes: 5, enabled: true, ignoreLines: [],
-    });
+      notify: { desktop: false }, intervalMinutes: 5,
+    }));
     await checkWatcher(getWatcher(w.id)!);
     await checkWatcher(getWatcher(w.id)!);
     expect(listSnapshots(w.id).items).toHaveLength(1);
   }, 30_000);
 });
 
-describe("scheduled recipes", () => {
-  it("claims due recipes once and writes a CSV per run", async () => {
-    const r = createRecipe({
+describe("scheduled tasks", () => {
+  it("claims due tasks once and the scheduled job writes a CSV", async () => {
+    const r = createRecipe(taskSchema.parse({
       name: "Fixture cards", url: `${site.base}/listing`, mode: "fast", scheduleMinutes: 60,
-      extract: { type: "selectors", itemSelector: ".card", fields: [{ name: "name", selector: "h2", attr: "text", multiple: false }] },
-    });
+      extract: { type: "selectors", itemSelector: ".card", fields: [{ name: "name", selector: "h2" }] },
+    }));
     expect(claimDueRecipes(5)).toHaveLength(0); // first run is a minute out
     db().prepare("UPDATE recipes SET next_run_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), r.id);
     const due = claimDueRecipes(5);
     expect(due.map((x) => x.id)).toEqual([r.id]);
     expect(claimDueRecipes(5)).toHaveLength(0); // lease moved forward
-    const { run, file } = await runScheduledRecipe(due[0]!);
+    const job = await enqueueAndWait({ kind: "task", refId: r.id, title: "Task: Fixture cards", trigger: "schedule", input: { taskId: r.id } }, 60_000);
+    expect(job.status).toBe("succeeded");
+    const run = getRun(String(job.result?.runId))!;
     expect(run.row_count).toBe(5);
-    expect(file && fs.readFileSync(file, "utf8")).toContain("Bolt Sport Earbuds");
-    expect(file?.startsWith(path.join(tmp, "exports", "fixture-cards"))).toBe(true);
+    expect(run.job_id).toBe(job.id);
+    const file = path.join(tmp, run.result!.files![0]!);
+    expect(fs.readFileSync(file, "utf8")).toContain("Bolt Sport Earbuds");
+    expect(file.startsWith(path.join(tmp, "exports", "fixture-cards"))).toBe(true);
     expect(getRecipe(r.id)?.last_status).toBe("ok");
   }, 30_000);
 });
@@ -121,9 +127,9 @@ const hasBrowser = browserInstalled() || fs.existsSync(process.env.PLAYWRIGHT_EX
 
 describe.skipIf(!hasBrowser)("browser mode", () => {
   it("renders JavaScript before extracting", async () => {
-    const fast = await runScrape({ url: `${site.base}/js`, mode: "fast", extract: { type: "selectors", itemSelector: "li.row", fields: [{ name: "t", selector: "a", attr: "text", multiple: false }] } });
+    const fast = await runScrape({ url: `${site.base}/js`, mode: "fast", extract: extractSchema.parse({ type: "selectors", itemSelector: "li.row", fields: [{ name: "t", selector: "a" }] }) });
     expect(fast.row_count).toBe(0);
-    const browser = await runScrape({ url: `${site.base}/js`, mode: "browser", extract: { type: "selectors", itemSelector: "li.row", fields: [{ name: "t", selector: "a", attr: "text", multiple: false }, { name: "price", selector: ".p", attr: "text", multiple: false }] } });
+    const browser = await runScrape({ url: `${site.base}/js`, mode: "browser", extract: extractSchema.parse({ type: "selectors", itemSelector: "li.row", fields: [{ name: "t", selector: "a" }, { name: "price", selector: ".p" }] }) });
     expect(browser.status).toBe("ok");
     expect(browser.result?.datasets[0]?.rows[4]).toMatchObject({ t: "Rendered item number 5", price_value: 500 });
   }, 60_000);

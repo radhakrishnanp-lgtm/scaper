@@ -32,18 +32,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ push }}>
       {children}
-      <div aria-live="polite" aria-atomic="false" className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 p-4 sm:items-end">
+      {/* Bottom centre, where forms rarely put buttons; the toast body lets clicks through so it never blocks a Save button. */}
+      <div aria-live="polite" aria-atomic="false" className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 p-4">
         {toasts.map((t) => {
           const I = Icon[t.tone];
           return (
-            <div key={t.id} role={t.tone === "error" ? "alert" : "status"} className="toast-in pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-xl border border-border bg-surface p-3.5 shadow-pop">
+            <div key={t.id} role={t.tone === "error" ? "alert" : "status"} className="toast-in flex w-full max-w-sm items-start gap-3 rounded-xl border border-border bg-surface p-3.5 shadow-pop">
               <I className={cn("mt-0.5 size-5 shrink-0", t.tone === "success" && "text-success", t.tone === "error" && "text-danger", t.tone === "info" && "text-accent")} aria-hidden />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{t.title}</p>
                 {t.body && <p className="mt-0.5 text-sm break-words text-muted">{t.body}</p>}
-                {t.action && <button className="mt-1.5 text-sm font-medium text-accent hover:underline" onClick={() => { t.action!.onClick(); dismiss(t.id); }}>{t.action.label}</button>}
+                {t.action && <button className="pointer-events-auto mt-1.5 text-sm font-medium text-accent hover:underline" onClick={() => { t.action!.onClick(); dismiss(t.id); }}>{t.action.label}</button>}
               </div>
-              <button onClick={() => dismiss(t.id)} className="rounded p-1 text-muted hover:text-text" aria-label="Dismiss"><X className="size-4" /></button>
+              <button onClick={() => dismiss(t.id)} className="pointer-events-auto rounded p-1 text-muted hover:text-text" aria-label="Dismiss"><X className="size-4" /></button>
             </div>
           );
         })}

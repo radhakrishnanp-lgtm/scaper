@@ -4,8 +4,8 @@ import path from "node:path";
 export default defineConfig({
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "src"),
-      "server-only": path.resolve(__dirname, "tests/stubs/empty.ts"),
+      "@": path.resolve(import.meta.dirname, "src"),
+      "server-only": path.resolve(import.meta.dirname, "tests/stubs/empty.ts"),
     },
   },
   test: { include: ["tests/**/*.test.ts"], environment: "node" },

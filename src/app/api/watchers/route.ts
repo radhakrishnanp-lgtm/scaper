@@ -1,11 +1,19 @@
 import { handler, readJson } from "@/server/api";
 import { audit } from "@/server/repo/events";
-import { createWatcher, listWatchers } from "@/server/repo/watchers";
+import { allWatcherTags, createWatcher, listWatchers, type WatcherFilter } from "@/server/repo/watchers";
 import { watcherSchema } from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
 
-export const GET = handler(async () => ({ watchers: listWatchers() }));
+export const GET = handler(async (req) => {
+  const sp = req.nextUrl.searchParams;
+  const status = sp.get("status");
+  const filter: WatcherFilter = {
+    q: sp.get("q") ?? undefined, tag: sp.get("tag") ?? undefined,
+    status: status === "active" || status === "paused" || status === "errors" || status === "changed" ? status : undefined,
+  };
+  return { watchers: listWatchers(filter), tags: allWatcherTags() };
+});
 
 export const POST = handler(async (req) => {
   const w = createWatcher(await readJson(req, watcherSchema));

@@ -237,12 +237,15 @@ export function autoExtract(html: string, base: string): {
   const datasets: Dataset[] = [];
 
   const products = productsFromJsonLd(jsonLd($), base);
-  if (products.length) datasets.push({ name: "Products (structured data)", columns: Object.keys(products[0]!), rows: products.slice(0, MAX_ROWS) });
-
   const groups = findRepeatedGroups($, base);
+  const productSet: Dataset | null = products.length ? { name: "Products (structured data)", columns: Object.keys(products[0]!), rows: products.slice(0, MAX_ROWS) } : null;
+  // Structured data comes first unless the page clearly shows many more items than it describes.
+  const productsFirst = productSet && products.length * 2 >= (groups[0]?.count ?? 0);
+  if (productSet && productsFirst) datasets.push(productSet);
   for (const [i, g] of groups.entries()) {
     const columns = Object.keys(g.sample[0] ?? {});
     datasets.push({ name: `Repeated items ${i + 1} (${g.count})`, columns, rows: g.sample });
+    if (i === 0 && productSet && !productsFirst) datasets.push(productSet);
   }
 
   datasets.push(...tables($));

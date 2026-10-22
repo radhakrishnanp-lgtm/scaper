@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/session-token";
 
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/health"];
+// Routes that don't run through the API handler (which verifies tokens) never accept one.
+const BEARER_EXCLUDED = ["/api/notifications/stream", "/api/auth/login", "/api/auth/logout"];
 
 function allowedHosts() {
   const extra = (process.env.SCAPER_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
@@ -24,6 +26,15 @@ export async function proxy(req: NextRequest) {
 
   const { pathname } = req.nextUrl;
   const isApi = pathname.startsWith("/api/");
+
+  // Personal API tokens (Settings → API) for scripts, n8n or cron jobs. Browsers never send these on their own,
+  // so cross-site requests can't use them. The route handler checks the token against the database.
+  const bearer = /^Bearer\s+scp_/i.test(req.headers.get("authorization") ?? "");
+  if (isApi && bearer && !BEARER_EXCLUDED.includes(pathname)) {
+    const headers = new Headers(req.headers);
+    headers.set("x-scaper-token-auth", "1");
+    return NextResponse.next({ request: { headers } });
+  }
   if (isApi && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     const origin = req.headers.get("origin");
     let originHost = "";

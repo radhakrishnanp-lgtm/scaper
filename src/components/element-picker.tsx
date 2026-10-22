@@ -5,6 +5,8 @@ import { ArrowUpLeft, Crosshair, Link2, ListPlus, Rows3 } from "lucide-react";
 import { Dialog } from "./dialog";
 import { Badge, Button, ErrorNote } from "./ui";
 import { api, errorText } from "@/lib/api-client";
+import type { BrowserStep } from "@/lib/schemas";
+import { plural } from "@/lib/format";
 
 type Box = { x: number; y: number; w: number; h: number; tag: string; text: string; selector: string; general: string; similar: number; href: string | null; src: string | null };
 type Inspect = { url: string; title: string; screenshot: string; width: number; height: number; boxes: Box[] };
@@ -34,12 +36,26 @@ function parentOf(boxes: Box[], b: Box) {
   return best;
 }
 
+const KEYWORDS: [RegExp, string][] = [
+  [/price|cost|amount|mrp/i, "price"], [/title|heading|headline/i, "title"], [/\bname\b|product-?name/i, "name"],
+  [/rating|stars?/i, "rating"], [/reviews?|ratings-?count/i, "reviews"], [/brand|vendor|seller/i, "brand"],
+  [/date|time|posted|published/i, "date"], [/author|byline/i, "author"], [/desc|summary|excerpt|snippet/i, "description"],
+  [/stock|availability/i, "availability"], [/sku|model|part/i, "sku"], [/categor|breadcrumb/i, "category"],
+  [/discount|saving|off\b/i, "discount"], [/location|address|city/i, "location"],
+];
+
+/** A useful column name from the element's classes, tag and text, so picked fields don't end up as field_2. */
 function guessName(b: Box) {
   if (b.tag === "img") return "image";
+  const classes = (b.general.split(" > ").pop() ?? "").split(".").slice(1).join(" ");
+  for (const [re, name] of KEYWORDS) if (re.test(classes)) return name;
+  if (b.tag === "time") return "date";
   if (/^h[1-6]$/.test(b.tag)) return "title";
   if (/[₹$€£]|\bRs\.?|\bINR\b/.test(b.text) && b.text.length < 30) return "price";
-  if (b.tag === "a") return "link";
-  return "field";
+  if (/^\d(\.\d)?\s*(out of 5|\/\s*5|★)/i.test(b.text)) return "rating";
+  if (/^[\d,]+\s*(reviews?|ratings?)$/i.test(b.text)) return "reviews";
+  if (b.tag === "a") return b.text.length > 12 ? "title" : "link";
+  return "text";
 }
 
 /**
@@ -55,8 +71,8 @@ export function relativeSelector(general: string, itemSelector: string) {
   return rest.slice(-2).join(" > ") || general;
 }
 
-export function ElementPicker({ url, open, onClose, onPick, itemSelector }: {
-  url: string; open: boolean; onClose: () => void; onPick: (a: PickAction) => void; itemSelector: string;
+export function ElementPicker({ url, open, onClose, onPick, itemSelector, steps = [] }: {
+  url: string; open: boolean; onClose: () => void; onPick: (a: PickAction) => void; itemSelector: string; steps?: BrowserStep[];
 }) {
   const hasItemSelector = Boolean(itemSelector.trim());
   const [data, setData] = useState<Inspect | null>(null);
@@ -65,12 +81,13 @@ export function ElementPicker({ url, open, onClose, onPick, itemSelector }: {
   const [hover, setHover] = useState<Box | null>(null);
   const [picked, setPicked] = useState<Box | null>(null);
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [added, setAdded] = useState<string[]>([]);
   const imgRef = useRef<HTMLImageElement>(null);
 
   const load = async () => {
     setLoading(true); setError(null); setPicked(null);
     try {
-      const d = await api<Inspect>("/api/inspect", { body: { url } });
+      const d = await api<Inspect>("/api/inspect", { body: { url, steps } });
       setData(d); setLoadedUrl(url);
     } catch (e) { setError(errorText(e)); } finally { setLoading(false); }
   };
@@ -92,10 +109,26 @@ export function ElementPicker({ url, open, onClose, onPick, itemSelector }: {
   const shotWidth = Math.min(data?.width ?? SHOT_WIDTH, SHOT_WIDTH);
   const similarBoxes = useMemo(() => (picked && picked.similar > 1 ? boxes.filter((b) => b.general === picked.general) : []), [picked, boxes]);
 
-  const pick = (a: PickAction) => { onPick(a); onClose(); };
+  // Fields keep the picker open so several can be picked in a row; choosing the item selector closes it.
+  const pick = (a: PickAction) => {
+    onPick(a);
+    if (a.kind === "item") { onClose(); return; }
+    setAdded((x) => [...x, a.name]);
+    setPicked(null);
+  };
 
   return (
-    <Dialog open={open} onClose={onClose} wide title="Pick elements on the page" description="Hover to highlight, click to select. Then add it as a field or use it as the item selector.">
+    <Dialog
+      open={open}
+      onClose={() => { setAdded([]); onClose(); }}
+      xl
+      title="Pick elements on the page"
+      description="Hover to highlight, click to select. Add as many fields as you like, then press Done."
+      footer={<>
+        {added.length > 0 && <span className="mr-auto text-sm text-muted">Added: {added.join(", ")}</span>}
+        <Button onClick={() => { setAdded([]); onClose(); }}>Done</Button>
+      </>}
+    >
       {loading && <div className="skeleton h-96 rounded-lg" role="status" aria-label="Loading page" />}
       {error && <ErrorNote title="Could not load the page" message={error} onRetry={load} />}
       {data && !loading && (
@@ -126,10 +159,10 @@ export function ElementPicker({ url, open, onClose, onPick, itemSelector }: {
                   <Button size="sm" variant="ghost" icon={<ArrowUpLeft className="size-4" />} onClick={() => setPicked(parentOf(boxes, picked))}>Select parent</Button>
                 )}
                 {picked.similar > 1 && (
-                  <Button size="sm" variant="secondary" icon={<Crosshair className="size-4" />} onClick={() => pick({ kind: "item", selector: picked.general })}>Use as item ({picked.similar} rows)</Button>
+                  <Button size="sm" variant="secondary" icon={<Crosshair className="size-4" />} onClick={() => pick({ kind: "item", selector: picked.general })}>Use as item ({plural(picked.similar, "row")})</Button>
                 )}
               </div>
-              <p className="text-xs text-muted">Tip: click one product card, choose “Use as item”, then pick its title and price to add fields.</p>
+              <p className="text-xs text-muted">{hasItemSelector ? "Fields are read inside each item. Pick the title, price, link … of one item." : "Tip: click one product card, choose “Use as item” (or “Select parent” until the whole card is outlined), then pick its title and price."}</p>
             </div>
           )}
           <div className="max-h-[60vh] overflow-auto rounded-lg border border-border">

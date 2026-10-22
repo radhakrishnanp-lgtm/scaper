@@ -119,3 +119,17 @@ export function detectBotWall(html: string, status: number): string | null {
   if (status === 429) return "The site says too many requests (429)";
   return null;
 }
+
+/** Live backoff state per host, for the Sites page. */
+export function hostStates() {
+  return [...hosts.entries()].map(([host, s]) => ({ host, penalty: s.penalty, blockedForMs: Math.max(0, s.blockedUntil - Date.now()) }));
+}
+
+/** Lets a host be tried again right away (after the user checked it in their own browser). */
+export function resetHost(host: string) {
+  const s = hosts.get(host);
+  if (!s) return false;
+  s.penalty = 0;
+  s.blockedUntil = 0;
+  return true;
+}

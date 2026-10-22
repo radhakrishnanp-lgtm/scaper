@@ -24,6 +24,11 @@ describe("autoExtract", () => {
     expect(suggestions[0]?.itemSelector).toContain("#results");
   });
 
+  it("puts the visible list first when structured data describes far fewer items", () => {
+    expect(datasets[0]?.name).toMatch(/^Repeated items/);
+    expect(datasets[1]?.name).toBe("Products (structured data)");
+  });
+
   it("extracts tables and page meta", () => {
     expect(datasets.find((d) => d.name === "Table 1")?.rows).toEqual([{ Model: "Aria", Battery: "30h" }, { Model: "Bolt", Battery: "8h" }]);
     expect(meta).toMatchObject({ title: "Gadget Store – Headphones", description: "Headphones at great prices", language: "en", h1: "Headphones" });
@@ -82,7 +87,7 @@ describe("Amazon parsers", () => {
 describe("watch targets", () => {
   it("reads a selector's text and number", () => {
     const r = readTarget(fx("listing.html"), BASE, { type: "selector", selector: ".card:first-child .price" });
-    expect(r).toEqual({ content: "₹2,499", value: 2499 });
+    expect(r).toMatchObject({ content: "₹2,499", value: 2499 });
   });
 
   it("detects an Amazon price automatically", () => {

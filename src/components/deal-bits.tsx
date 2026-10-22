@@ -1,17 +1,13 @@
+import { useState } from "react";
+import { Tag } from "lucide-react";
+import type { DealStats } from "@/server/deals/score";
+import type { Product } from "@/server/repo/products";
+import type { ListingItem } from "@/server/deals/parsers";
 import { Badge } from "./ui";
 
-export type DealStats = {
-  current: number | null; low: number | null; high: number | null; avg30: number | null; points: number; daysTracked: number;
-  claimedDiscount: number | null; realDiscount: number | null; isLowest: boolean; inflatedMrp: boolean; score: number | null;
-  verdict: "great" | "good" | "fair" | "wait" | "collecting"; summary: string;
-};
-
-export type ProductView = {
-  id: string; url: string; source: string; title: string | null; image: string | null; currency: string | null;
-  current_price: number | null; list_price: number | null; rating: number | null; review_count: number | null; in_stock: boolean | null;
-  target_price: number | null; interval_minutes: number; enabled: boolean; last_checked_at: string | null; next_check_at: string | null;
-  last_error: string | null; created_at: string; stats: DealStats;
-};
+export type { DealStats };
+export type ProductView = Product & { stats: DealStats };
+export type ScanItem = ListingItem & { tracked: boolean; stats: DealStats | null; aiNote?: string };
 
 const VERDICT: Record<DealStats["verdict"], { tone: "success" | "accent" | "neutral" | "warning"; label: string }> = {
   great: { tone: "success", label: "Great deal" },
@@ -34,3 +30,14 @@ export function ScoreBar({ score }: { score: number | null }) {
     </div>
   );
 }
+
+export function Thumb({ src, alt, size = "md" }: { src: string | null; alt: string; size?: "md" | "lg" }) {
+  const box = size === "lg" ? "size-40" : "size-16";
+  const [failed, setFailed] = useState<string | null>(null);
+  return src && failed !== src
+    // eslint-disable-next-line @next/next/no-img-element -- product images come from many store CDNs
+    ? <img src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(src)} className={`${box} shrink-0 overflow-hidden rounded-lg border border-border bg-white object-contain p-1 text-[0px]`} />
+    : <div className={`${box} flex shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted`} role="img" aria-label={alt}><Tag className="size-5" /></div>;
+}
+
+export const atTarget = (p: ProductView) => p.target_price !== null && p.current_price !== null && p.current_price <= p.target_price;

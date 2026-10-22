@@ -1,5 +1,6 @@
 import { handler, idParam, notFound, rateLimit } from "@/server/api";
-import { refreshProduct } from "@/server/deals/tracker";
+import { withStats } from "@/server/deals/tracker";
+import { enqueueAndWait } from "@/server/jobs";
 import { getProduct } from "@/server/repo/products";
 
 export const POST = handler(async (_req, { params }: { params: Promise<{ id: string }> }) => {
@@ -7,5 +8,6 @@ export const POST = handler(async (_req, { params }: { params: Promise<{ id: str
   rateLimit(`refresh:${id}`, 4, 2);
   const p = getProduct(id);
   if (!p) throw notFound("Product");
-  return refreshProduct(p);
+  const job = await enqueueAndWait({ kind: "product", refId: id, title: `Price: ${p.title?.slice(0, 80) ?? p.url}`, input: { productId: id }, unique: true }, 90_000);
+  return { ok: job.status === "succeeded", error: job.error ?? undefined, job, product: withStats(getProduct(id)!) };
 });

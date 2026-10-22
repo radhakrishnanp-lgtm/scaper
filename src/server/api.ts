@@ -7,7 +7,7 @@ import { FetchError } from "./fetcher/errors";
 import { log } from "./log";
 
 export class HttpError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public fields?: Record<string, string>) {
     super(message);
   }
 }
@@ -38,6 +38,13 @@ export function handler<C>(fn: (req: NextRequest, ctx: C) => Promise<Response | 
   return async (req: NextRequest, ctx: C) => {
     const requestId = randomUUID();
     try {
+      const auth = req.headers.get("authorization");
+      if (auth && /^Bearer\s+/i.test(auth)) {
+        const { verifyToken } = await import("./repo/tokens");
+        if (!verifyToken(auth.replace(/^Bearer\s+/i, "").trim())) throw new HttpError(401, "bad_token", "This API token is not valid or was revoked.");
+      } else if (req.headers.get("x-scaper-token-auth")) {
+        throw new HttpError(401, "bad_token", "Missing API token.");
+      }
       const out = await fn(req, ctx);
       return out instanceof Response ? out : NextResponse.json(out ?? { ok: true });
     } catch (e) {
@@ -49,7 +56,7 @@ export function handler<C>(fn: (req: NextRequest, ctx: C) => Promise<Response | 
         status = 400; code = "validation"; message = "Please fix the highlighted fields.";
         fields = Object.fromEntries(e.issues.map((i) => [i.path.join(".") || "_", i.message]));
       } else if (e instanceof HttpError) {
-        status = e.status; code = e.code; message = e.message;
+        status = e.status; code = e.code; message = e.message; fields = e.fields;
       } else if (e instanceof AiError) {
         status = AI_STATUS[e.code]; code = `ai_${e.code}`; message = e.message;
       } else if (e instanceof FetchError) {

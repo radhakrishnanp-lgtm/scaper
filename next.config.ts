@@ -11,6 +11,8 @@ const nextConfig: NextConfig = {
   // Native and browser-automation packages must stay outside the server bundle.
   serverExternalPackages: ["better-sqlite3", "playwright", "playwright-core"],
   poweredByHeader: false,
+  // The floating dev badge sits over the sidebar footer; build errors still show as an overlay.
+  devIndicators: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

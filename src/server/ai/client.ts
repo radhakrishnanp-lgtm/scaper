@@ -110,7 +110,7 @@ export async function chat(
     }
     const tokensIn = parsed.usage?.prompt_tokens ?? 0;
     const tokensOut = parsed.usage?.completion_tokens ?? 0;
-    addAiUsage(tokensIn + tokensOut);
+    addAiUsage(tokensIn, tokensOut);
     log.info("ai.call", { model: cfg.resolvedModel, tokensIn, tokensOut, tools: opts.tools?.length ?? 0 });
     const choice = parsed.choices[0]!;
     return {

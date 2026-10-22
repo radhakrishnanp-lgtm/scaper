@@ -3,7 +3,8 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Repeat, Trash2 } from "lucide-react";
+import { ArrowLeft, ListChecks, Repeat, Trash2 } from "lucide-react";
+import type { Task } from "@/server/repo/scrapes";
 import { ConfirmDialog } from "@/components/dialog";
 import { ScrapeResultView, type RunView } from "@/components/scrape-result";
 import { useToast } from "@/components/toast";
@@ -16,23 +17,41 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
   const { id } = use(params);
   const router = useRouter();
   const toast = useToast();
-  const { data, error, reload } = useApi<{ run: RunView & { recipe_id: string | null } }>(`/api/runs/${id}`);
+  const { data, error, reload } = useApi<{ run: RunView }>(`/api/runs/${id}`);
+  const task = useApi<{ task: Task }>(data?.run.recipe_id ? `/api/tasks/${data.run.recipe_id}` : null);
   const [deleting, setDeleting] = useState(false);
+  const [running, setRunning] = useState(false);
   if (error) return <ErrorNote message={error} onRetry={reload} />;
   if (!data) return <Card><LoadingRows /></Card>;
   const run = data.run;
+
+  const runAgain = async () => {
+    if (!run.recipe_id) { router.push(`/scrape?url=${encodeURIComponent(run.url)}`); return; }
+    setRunning(true);
+    try {
+      const { job } = await api<{ job: { id: string } }>(`/api/tasks/${run.recipe_id}/run?wait=0`, { method: "POST" });
+      router.push(`/runs/${job.id}`);
+    } catch (e) { toast.error("Could not start", errorText(e)); setRunning(false); }
+  };
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <Link href="/history" className="inline-flex items-center gap-1 text-sm text-muted hover:text-text"><ArrowLeft className="size-4" />History</Link>
+        <div>
+          <Link href="/history" className="inline-flex items-center gap-1 text-sm text-muted hover:text-text"><ArrowLeft className="size-4" />Data</Link>
+          <p className="mt-1 text-sm text-muted">
+            {task.data ? <>From task <Link href={`/tasks/${task.data.task.id}`} className="font-medium text-accent hover:underline">{task.data.task.name}</Link> · </> : run.recipe_id ? (task.loading ? "" : "From a deleted task · ") : "One-off scrape · "}
+            {dateTime(run.created_at)}
+          </p>
+        </div>
         <div className="flex gap-2">
-          <Link href={run.recipe_id ? `/scrape?recipe=${run.recipe_id}` : `/scrape?url=${encodeURIComponent(run.url)}`} className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium shadow-card hover:bg-surface-2"><Repeat className="size-4" />Run again</Link>
+          {task.data && <Link href={`/tasks/${task.data.task.id}`}><Button size="sm" variant="secondary" icon={<ListChecks className="size-4" />}>Task</Button></Link>}
+          <Button size="sm" variant="secondary" icon={<Repeat className="size-4" />} loading={running} onClick={runAgain}>Run again</Button>
           <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => setDeleting(true)}>Delete</Button>
         </div>
       </div>
-      <p className="mb-4 text-sm text-muted">Scraped {dateTime(run.created_at)}</p>
       <ScrapeResultView run={run} />
-      <ConfirmDialog open={deleting} onCancel={() => setDeleting(false)} title="Delete this result?" body="The scraped data will be removed from History."
+      <ConfirmDialog open={deleting} onCancel={() => setDeleting(false)} title="Delete this result?" body="The scraped rows are removed from Data."
         onConfirm={async () => {
           try { await api(`/api/runs/${id}`, { method: "DELETE" }); toast.success("Result deleted"); router.push("/history"); }
           catch (e) { toast.error("Could not delete", errorText(e)); setDeleting(false); }

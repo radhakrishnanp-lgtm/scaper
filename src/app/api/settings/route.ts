@@ -25,9 +25,9 @@ export const PUT = handler(async (req) => {
   const patch = await readJson(req, settingsPatchSchema);
   if (patch.scraping?.proxyUrl) {
     const ok = /^https?:\/\/[^\s]+$/i.test(patch.scraping.proxyUrl) || MASKED.test(patch.scraping.proxyUrl);
-    if (!ok) throw new HttpError(400, "validation", "Proxy must look like http://user:pass@host:port");
+    if (!ok) throw new HttpError(400, "validation", "Please fix the highlighted fields.", { "scraping.proxyUrl": "Use the form http://user:pass@host:port" });
   }
-  const saved = saveSettings({ ai: dropMasked(patch.ai), scraping: dropMasked(patch.scraping), notifications: dropMasked(patch.notifications) });
+  const saved = saveSettings({ ai: dropMasked(patch.ai), scraping: dropMasked(patch.scraping), notifications: dropMasked(patch.notifications), data: patch.data });
   audit("settings.updated", { sections: Object.keys(patch) });
   return { settings: publicSettings(saved) };
 });

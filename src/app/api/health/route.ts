@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { browserInstalled } from "@/server/fetcher/browser";
 import { schedulerStatus } from "@/server/scheduler";
+import pkg from "../../../../package.json";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export async function GET() {
   const scheduler = schedulerStatus();
   const ok = database === "ok";
   return NextResponse.json(
-    { ok, database, scheduler: scheduler.running ? "running" : "stopped", browser: browserInstalled() ? "installed" : "missing", time: new Date().toISOString() },
+    { ok, version: pkg.version, database, scheduler: scheduler.running ? "running" : "stopped", browser: browserInstalled() ? "installed" : "missing", time: new Date().toISOString() },
     { status: ok ? 200 : 503 },
   );
 }

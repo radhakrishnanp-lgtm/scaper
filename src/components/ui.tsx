@@ -203,3 +203,226 @@ export function Stat({ label, value, hint, icon }: { label: string; value: React
     </Card>
   );
 }
+
+/* ---------- Additional building blocks ---------- */
+
+export function IconButton({ label, children, className, size = "md", ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; size?: "sm" | "md" }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:opacity-40",
+        size === "sm" ? "size-8" : "size-10",
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
+  return <kbd className={cn("inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-surface-2 px-1 font-sans text-[11px] font-medium text-muted", className)}>{children}</kbd>;
+}
+
+export function Checkbox({ checked, onChange, label, indeterminate, className, hideLabel, disabled }: {
+  checked: boolean; onChange: (v: boolean) => void; label: string; indeterminate?: boolean; className?: string; hideLabel?: boolean; disabled?: boolean;
+}) {
+  return (
+    <label className={cn("inline-flex cursor-pointer items-center gap-2 text-sm", disabled && "cursor-not-allowed opacity-50", className)}>
+      <input
+        type="checkbox"
+        className="size-4 cursor-pointer rounded border-border accent-[var(--accent)]"
+        checked={checked}
+        disabled={disabled}
+        ref={(el) => { if (el) el.indeterminate = Boolean(indeterminate) && !checked; }}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={hideLabel ? label : undefined}
+      />
+      {!hideLabel && <span>{label}</span>}
+    </label>
+  );
+}
+
+export function Progress({ value, max = 100, className, tone = "accent", label }: { value: number | null; max?: number; className?: string; tone?: "accent" | "success" | "danger" | "warning"; label: string }) {
+  const pct = value === null ? null : Math.max(0, Math.min(100, (value / (max || 1)) * 100));
+  const bar = { accent: "bg-accent", success: "bg-success", danger: "bg-danger", warning: "bg-warning" }[tone];
+  return (
+    <div className={cn("h-1.5 w-full overflow-hidden rounded-full bg-surface-2", className)} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={value ?? undefined}>
+      {pct === null
+        ? <div className={cn("h-full w-1/3 animate-[indeterminate_1.2s_ease-in-out_infinite] rounded-full", bar)} />
+        : <div className={cn("h-full rounded-full transition-[width] duration-300", bar)} style={{ width: `${pct}%` }} />}
+    </div>
+  );
+}
+
+/** Tabs with roving focus. `value` is controlled so pages can keep the tab in the URL. */
+export function Tabs<T extends string>({ value, onChange, tabs, className, size = "md" }: {
+  value: T; onChange: (v: T) => void; tabs: { value: T; label: string; icon?: ReactNode; count?: number | null; hidden?: boolean }[]; className?: string; size?: "sm" | "md";
+}) {
+  const uid = useId();
+  const visible = tabs.filter((t) => !t.hidden);
+  const move = (dir: number) => {
+    const i = visible.findIndex((t) => t.value === value);
+    const next = visible[(i + dir + visible.length) % visible.length]!;
+    onChange(next.value);
+    requestAnimationFrame(() => document.getElementById(`${uid}-tab-${next.value}`)?.focus());
+  };
+  return (
+    <div role="tablist" className={cn("flex gap-1 overflow-x-auto border-b border-border", className)} onKeyDown={(e) => { if (e.key === "ArrowRight") move(1); if (e.key === "ArrowLeft") move(-1); }}>
+      {visible.map((t) => (
+        <button
+          key={t.value}
+          id={`${uid}-tab-${t.value}`}
+          role="tab"
+          type="button"
+          aria-selected={value === t.value}
+          tabIndex={value === t.value ? 0 : -1}
+          onClick={() => onChange(t.value)}
+          className={cn(
+            "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-3 font-medium whitespace-nowrap transition-colors",
+            size === "sm" ? "h-9 text-xs" : "h-11 text-sm",
+            value === t.value ? "border-accent text-text" : "border-transparent text-muted hover:text-text",
+          )}
+        >
+          {t.icon}
+          {t.label}
+          {t.count !== undefined && t.count !== null && <span className={cn("rounded-full px-1.5 text-[11px] tabular-nums", value === t.value ? "bg-accent-soft text-accent" : "bg-surface-2 text-muted")}>{t.count}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Free-text chips (tags, keywords). Enter or comma adds; Backspace on empty removes the last. */
+export function TagInput({ value, onChange, placeholder = "Add tag", suggestions = [], max = 12, id, label }: {
+  value: string[]; onChange: (v: string[]) => void; placeholder?: string; suggestions?: string[]; max?: number; id?: string; label?: string;
+}) {
+  const listId = useId();
+  const add = (raw: string) => {
+    const t = raw.trim().replace(/,$/, "").slice(0, 40);
+    if (t && !value.includes(t) && value.length < max) onChange([...value, t]);
+  };
+  return (
+    <div className={cn(fieldBase, "flex min-h-11 flex-wrap items-center gap-1.5 py-1.5")}>
+      {value.map((t) => (
+        <span key={t} className="inline-flex items-center gap-1 rounded-md bg-surface-2 py-0.5 pr-1 pl-2 text-xs font-medium">
+          {t}
+          <button type="button" aria-label={`Remove ${t}`} className="rounded px-1 text-muted hover:text-danger" onClick={() => onChange(value.filter((x) => x !== t))}>×</button>
+        </span>
+      ))}
+      <input
+        id={id}
+        aria-label={label ?? placeholder}
+        list={suggestions.length ? listId : undefined}
+        className="h-7 min-w-24 flex-1 bg-transparent text-sm outline-none placeholder:text-muted/70"
+        placeholder={value.length >= max ? "" : placeholder}
+        onKeyDown={(e) => {
+          const el = e.currentTarget;
+          if ((e.key === "Enter" || e.key === ",") && el.value.trim()) { e.preventDefault(); add(el.value); el.value = ""; }
+          if (e.key === "Backspace" && !el.value && value.length) onChange(value.slice(0, -1));
+        }}
+        onBlur={(e) => { if (e.currentTarget.value.trim()) { add(e.currentTarget.value); e.currentTarget.value = ""; } }}
+      />
+      {suggestions.length > 0 && <datalist id={listId}>{suggestions.filter((s) => !value.includes(s)).map((s) => <option key={s} value={s} />)}</datalist>}
+    </div>
+  );
+}
+
+export function SearchInput({ value, onChange, placeholder = "Search", className, autoFocus }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string; autoFocus?: boolean }) {
+  return (
+    <div className={cn("relative", className)}>
+      <svg viewBox="0 0 24 24" className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+      <input
+        type="search"
+        value={value}
+        autoFocus={autoFocus}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className={cn(fieldBase, "h-10 pl-9")}
+      />
+    </div>
+  );
+}
+
+/** A row of toggle chips, e.g. status filters. */
+export function FilterChips<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: { value: T; label: string; count?: number }[]; label: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
+            value === o.value ? "border-accent bg-accent-soft text-accent" : "border-border bg-surface text-muted hover:text-text",
+          )}
+        >
+          {o.label}
+          {o.count !== undefined && <span className="tabular-nums opacity-80">{o.count}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function KeyValue({ items, className }: { items: { label: string; value: ReactNode; hidden?: boolean }[]; className?: string }) {
+  return (
+    <dl className={cn("grid grid-cols-[minmax(110px,auto)_1fr] gap-x-4 gap-y-2 text-sm", className)}>
+      {items.filter((i) => !i.hidden).map((i) => (
+        <div key={i.label} className="contents">
+          <dt className="text-muted">{i.label}</dt>
+          <dd className="min-w-0 break-words">{i.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function Code({ children, className }: { children: ReactNode; className?: string }) {
+  return <code className={cn("rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[12px]", className)}>{children}</code>;
+}
+
+/** A section inside a form card: title, help text, then fields. */
+export function Section({ title, description, children, actions, className }: { title: string; description?: ReactNode; children: ReactNode; actions?: ReactNode; className?: string }) {
+  return (
+    <section className={cn("space-y-4", className)}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">{title}</h3>
+          {description && <p className="mt-0.5 text-xs text-muted">{description}</p>}
+        </div>
+        {actions}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Small "i" note in a tinted box. */
+export function Callout({ tone = "neutral", title, children, icon, action }: { tone?: Tone; title?: string; children?: ReactNode; icon?: ReactNode; action?: ReactNode }) {
+  const box: Record<Tone, string> = {
+    neutral: "border-border bg-surface-2/60",
+    accent: "border-accent/30 bg-accent-soft/40",
+    success: "border-success/30 bg-success-soft/50",
+    warning: "border-warning/30 bg-warning-soft/60",
+    danger: "border-danger/30 bg-danger-soft/60",
+  };
+  return (
+    <div className={cn("flex items-start gap-3 rounded-xl border p-3 text-sm", box[tone])}>
+      {icon && <span className="mt-0.5 shrink-0">{icon}</span>}
+      <div className="min-w-0 flex-1">
+        {title && <p className="font-medium">{title}</p>}
+        {children && <div className={cn(title && "mt-0.5", "text-muted")}>{children}</div>}
+      </div>
+      {action}
+    </div>
+  );
+}

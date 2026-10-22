@@ -1,6 +1,8 @@
 import { handler, idParam, notFound } from "@/server/api";
+import { serializeDataset, type ExportFormat } from "@/server/export/formats";
 import { getRun } from "@/server/repo/scrapes";
-import { toCsv } from "@/lib/csv";
+
+const FORMATS: ExportFormat[] = ["csv", "json", "ndjson", "xlsx"];
 
 export const GET = handler(async (req, { params }: { params: Promise<{ id: string }> }) => {
   const run = getRun(idParam.parse((await params).id));
@@ -8,13 +10,11 @@ export const GET = handler(async (req, { params }: { params: Promise<{ id: strin
   const idx = Math.max(0, Number(req.nextUrl.searchParams.get("dataset") ?? 0) || 0);
   const ds = run.result.datasets[idx];
   if (!ds) throw notFound("Dataset");
-  const format = req.nextUrl.searchParams.get("format") === "json" ? "json" : "csv";
+  const requested = req.nextUrl.searchParams.get("format") as ExportFormat | null;
+  const format: ExportFormat = requested && FORMATS.includes(requested) ? requested : "csv";
   const base = `${new URL(run.url).hostname}-${ds.name}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
-  const body = format === "json" ? JSON.stringify(ds.rows, null, 2) : "﻿" + toCsv(ds.columns, ds.rows);
-  return new Response(body, {
-    headers: {
-      "content-type": format === "json" ? "application/json; charset=utf-8" : "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${base}.${format}"`,
-    },
+  const out = serializeDataset(ds, format);
+  return new Response(typeof out.body === "string" ? out.body : Buffer.from(out.body), {
+    headers: { "content-type": out.type, "content-disposition": `attachment; filename="${base}.${out.ext}"` },
   });
 });

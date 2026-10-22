@@ -30,6 +30,17 @@ export function decodeBody(buf: Buffer, contentType: string | null): string {
   }
 }
 
+/** Turns a JSON cookie export into a Cookie header; a plain "a=1; b=2" string passes through. */
+export function cookieHeader(input: string): string {
+  const t = input.trim();
+  if (!t.startsWith("[")) return t;
+  try {
+    return (JSON.parse(t) as { name?: string; value?: string }[]).filter((c) => c.name).map((c) => `${c.name}=${c.value ?? ""}`).join("; ");
+  } catch {
+    return "";
+  }
+}
+
 export type HttpResponse = { status: number; url: string; headers: Headers; text: string };
 
 /**
@@ -38,7 +49,10 @@ export type HttpResponse = { status: number; url: string; headers: Headers; text
  */
 export async function httpGet(
   url: string,
-  opts: { userAgent: string; timeoutMs: number; proxyUrl: string; accept?: string; checkUrl?: (u: string) => Promise<void> },
+  opts: {
+    userAgent: string; timeoutMs: number; proxyUrl: string; accept?: string; checkUrl?: (u: string) => Promise<void>;
+    headers?: Record<string, string>; cookies?: string; signal?: AbortSignal;
+  },
 ): Promise<HttpResponse> {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -48,15 +62,18 @@ export async function httpGet(
       res = await undiciFetch(current, {
         redirect: "manual",
         dispatcher: dispatcherFor(opts.proxyUrl),
-        signal: AbortSignal.timeout(opts.timeoutMs),
+        signal: opts.signal ? AbortSignal.any([AbortSignal.timeout(opts.timeoutMs), opts.signal]) : AbortSignal.timeout(opts.timeoutMs),
         headers: {
           "user-agent": opts.userAgent,
           accept: opts.accept ?? "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
           "accept-language": "en-IN,en;q=0.9",
+          // Site headers and cookies only go to the original host, never across a redirect to another site.
+          ...(new URL(current).hostname === new URL(url).hostname ? { ...opts.headers, ...(opts.cookies ? { cookie: cookieHeader(opts.cookies) } : {}) } : {}),
         },
       });
     } catch (e) {
       const err = e as Error;
+      if (opts.signal?.aborted) throw new FetchError("cancelled", "Cancelled.");
       if (err.name === "TimeoutError" || err.name === "AbortError") throw new FetchError("timeout", `The page took longer than ${Math.round(opts.timeoutMs / 1000)}s to respond.`);
       throw new FetchError("network", `Could not reach the site: ${(err.cause as Error | undefined)?.message ?? err.message}`);
     }
