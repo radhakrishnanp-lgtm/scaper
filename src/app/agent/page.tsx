@@ -2,13 +2,13 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BadgePercent, Bot, CheckCircle2, ChevronRight, CornerDownRight, ListChecks, MessageSquarePlus, Radar, Search, Send, ShieldCheck, Square, Trash2, Wrench, XCircle } from "lucide-react";
+import { BadgePercent, Bot, Check, CheckCircle2, EyeOff, Hand, X, ChevronRight, CornerDownRight, ListChecks, MessageSquarePlus, Radar, Search, Send, ShieldCheck, Square, Trash2, Wrench, XCircle } from "lucide-react";
 import type { AgentRun, AgentStep } from "@/server/repo/agent";
 import { CopyButton } from "@/components/data-table";
 import { ConfirmDialog } from "@/components/dialog";
 import { Markdown } from "@/components/markdown";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Callout, Card, CardHeader, EmptyState, ErrorNote, IconButton, Kbd, PageHeader, SearchInput, Switch, Textarea } from "@/components/ui";
+import { Badge, Button, Callout, Card, CardHeader, EmptyState, ErrorNote, IconButton, Kbd, PageHeader, SearchInput, Select, Switch, Textarea } from "@/components/ui";
 import { api, errorText } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
 import { dateTime, timeAgo } from "@/lib/format";
@@ -34,23 +34,22 @@ const EXAMPLES: { group: string; icon: React.ReactNode; items: string[] }[] = [
   ] },
 ];
 
-const TOOLS: { name: string; label: string; what: string; changes?: boolean }[] = [
-  { name: "open_page", label: "Opened page", what: "Reads a page's text and links." },
-  { name: "extract_items", label: "Extracted items", what: "Finds lists, product data and tables automatically." },
-  { name: "suggest_selectors", label: "Worked out selectors", what: "Proposes CSS selectors and tests them on the page." },
-  { name: "extract_with_selectors", label: "Extracted with selectors", what: "Pulls exact fields with CSS selectors." },
-  { name: "scan_deals", label: "Scanned deals", what: "Ranks a shop listing by discount and deal score." },
-  { name: "price_history", label: "Checked price history", what: "Reads Scaper's own price history for a product." },
-  { name: "list_tracked_products", label: "Listed tracked products", what: "Sees your tracked products and scores." },
-  { name: "list_watchers", label: "Listed watchers", what: "Sees your watchers and their status." },
-  { name: "recent_changes", label: "Read recent changes", what: "Reads what your watchers saw change." },
-  { name: "list_tasks", label: "Listed tasks", what: "Sees your saved tasks and last runs." },
-  { name: "track_product", label: "Started tracking", what: "Tracks a product's price.", changes: true },
-  { name: "create_watcher", label: "Created watcher", what: "Creates a watcher.", changes: true },
-  { name: "run_task", label: "Ran task", what: "Runs one of your saved tasks.", changes: true },
-  { name: "notify_user", label: "Sent alert", what: "Sends you an alert.", changes: true },
-];
-const TOOL_LABEL = Object.fromEntries(TOOLS.map((t) => [t.name, t.label]));
+const TOOL_LABEL: Record<string, string> = {
+  read_page: "Read page", extract_items: "Extracted items", extract_with_ai: "Extracted with AI", extract_with_selectors: "Extracted with selectors",
+  suggest_selectors: "Worked out selectors", map_site: "Mapped site", plan_category_scrape: "Planned category scrape",
+  browser_open: "Opened in browser", browser_act: "Browser action", browser_read: "Read browser page", browser_extract: "Extracted from browser",
+  list_tasks: "Listed tasks", run_task: "Ran task", create_task: "Created task", set_task_schedule: "Changed schedule", delete_task: "Deleted task",
+  list_runs: "Listed runs", get_run_rows: "Read run rows", compare_runs: "Compared runs",
+  list_watchers: "Listed watchers", create_watcher: "Created watcher", check_watcher: "Checked watcher", pause_watcher: "Paused watcher", delete_watcher: "Deleted watcher", recent_changes: "Read recent changes",
+  scan_deals: "Scanned deals", price_history: "Checked price history", list_tracked_products: "Listed tracked products", track_product: "Started tracking", untrack_product: "Stopped tracking", create_deal_search: "Created deal search",
+  notify_user: "Sent alert", site_info: "Checked site", slow_down_site: "Slowed down site", remember: "Remembered", forget: "Forgot", search_scaper: "Searched Scaper", ai_usage: "Checked AI usage",
+  // Older conversations
+  open_page: "Opened page",
+};
+type Catalog = { tools: { name: string; group: string; changes: boolean; description: string }[]; approval: "ask" | "auto"; maxSteps: number; privateMode: boolean };
+type ProviderModels = { id: string; name: string; enabled: boolean; models: { id: string }[] };
+type AiPublic = { main: { providerId: string; model: string }; fast: { providerId: string; model: string }; providers: ProviderModels[] };
+const money = (v: number) => (v >= 0.01 ? `$${v.toFixed(2)}` : v > 0 ? `$${v.toFixed(4)}` : "");
 
 type Detail = { run: AgentRun; thread: AgentRun[] };
 
@@ -70,7 +69,10 @@ function StepView({ step, n }: { step: AgentStep; n: number }) {
         <ChevronRight className="size-4 shrink-0 text-muted transition-transform group-open:rotate-90" aria-hidden />
         {step.ok ? <Wrench className="size-4 shrink-0 text-accent" aria-hidden /> : <XCircle className="size-4 shrink-0 text-danger" aria-label="Failed" />}
         <span className="shrink-0 font-medium">{TOOL_LABEL[step.name] ?? step.name}</span>
-        <span className="min-w-0 truncate text-muted">{target}</span>
+        <span className="min-w-0 flex-1 truncate text-muted">{target}</span>
+        {step.approval === "allowed" && <Badge tone="success">you allowed</Badge>}
+        {step.approval === "declined" && <Badge tone="warning">you declined</Badge>}
+        {step.ms !== undefined && step.ms >= 1000 && <span className="shrink-0 text-xs text-muted tabular-nums">{(step.ms / 1000).toFixed(1)}s</span>}
       </summary>
       <div className="space-y-2 border-t border-border px-3 py-2">
         {args.length > 0 && <p className="font-mono text-xs break-all text-muted">{args.map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join("  ")}</p>}
@@ -87,8 +89,37 @@ function StatusIcon({ status }: { status: AgentRun["status"] }) {
   return <XCircle className="size-4 text-danger" aria-label="Failed" />;
 }
 
+/** "The agent wants to …": shown while a change waits for your OK. */
+function ApprovalCard({ run, onAnswered }: { run: AgentRun; onAnswered: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+  const p = run.pending!;
+  const answer = async (decision: "allow" | "allow_all" | "deny") => {
+    setBusy(decision);
+    try { await api(`/api/agent/runs/${run.id}/approve`, { body: { decision } }); onAnswered(); }
+    catch (e) { toast.error("Could not send your answer", errorText(e)); } finally { setBusy(null); }
+  };
+  const args = Object.entries(p.args).filter(([, v]) => v !== undefined && v !== null && v !== "");
+  return (
+    <div role="alertdialog" aria-label="The agent asks for your OK" className="rounded-xl border-2 border-warning/60 bg-warning-soft/30 p-4">
+      <p className="flex items-center gap-2 text-sm font-semibold"><Hand className="size-4 text-warning" />The agent wants to: {p.summary}</p>
+      {args.length > 0 && (
+        <dl className="mt-2 grid gap-x-3 gap-y-0.5 font-mono text-xs sm:grid-cols-[auto_1fr]">
+          {args.slice(0, 12).map(([k, v]) => <div key={k} className="contents"><dt className="text-muted">{k}</dt><dd className="break-all">{typeof v === "string" ? v : JSON.stringify(v)}</dd></div>)}
+        </dl>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" icon={<Check className="size-4" />} loading={busy === "allow"} disabled={Boolean(busy)} onClick={() => void answer("allow")}>Allow</Button>
+        <Button size="sm" variant="secondary" loading={busy === "allow_all"} disabled={Boolean(busy)} onClick={() => void answer("allow_all")}>Allow all for this request</Button>
+        <Button size="sm" variant="ghost" icon={<X className="size-4" />} loading={busy === "deny"} disabled={Boolean(busy)} onClick={() => void answer("deny")}>Decline</Button>
+      </div>
+      <p className="mt-2 text-xs text-muted">Waits up to 30 minutes, then declines. Change this in Settings → AI.</p>
+    </div>
+  );
+}
+
 /** One question and its answer; earlier turns of a conversation render compact. */
-function Turn({ run, compact, onStop, stopping }: { run: AgentRun; compact?: boolean; onStop?: () => void; stopping?: boolean }) {
+function Turn({ run, compact, onStop, stopping, onAnswered }: { run: AgentRun; compact?: boolean; onStop?: () => void; stopping?: boolean; onAnswered?: () => void }) {
   const tools = run.steps.filter((s) => s.type === "tool");
   const failed = tools.filter((s) => s.type === "tool" && !s.ok).length;
   let n = 0;
@@ -102,9 +133,10 @@ function Turn({ run, compact, onStop, stopping }: { run: AgentRun; compact?: boo
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             <StatusIcon status={run.status} />
-            <span>{run.model}</span>
+            <span className="font-mono">{run.model_label ?? run.model}</span>
+            {run.private && <Badge><EyeOff className="size-3" />private</Badge>}
             <span>{tools.length} tool call{tools.length === 1 ? "" : "s"}{failed ? ` (${failed} failed)` : ""}</span>
-            <span>{(run.tokens_in + run.tokens_out).toLocaleString("en-IN")} tokens</span>
+            <span>{(run.tokens_in + run.tokens_out).toLocaleString("en-IN")} tokens{run.cost ? ` · ${money(run.cost)}` : ""}</span>
             <time title={dateTime(run.created_at)}>{timeAgo(run.created_at)}</time>
             {run.status === "running" && onStop && <Button size="sm" variant="secondary" icon={<Square className="size-3.5" />} loading={stopping} onClick={onStop}>Stop</Button>}
           </div>
@@ -113,7 +145,8 @@ function Turn({ run, compact, onStop, stopping }: { run: AgentRun; compact?: boo
           ) : (
             run.steps.length > 0 && <div className="space-y-1.5">{run.steps.map((s, i) => <StepView key={i} step={s} n={s.type === "tool" ? ++n : n} />)}</div>
           )}
-          {run.status === "running" && <div className="flex items-center gap-2 text-sm text-muted" role="status"><span className="skeleton h-4 w-4 rounded-full" />Working: each page load waits for the site&apos;s polite delay.</div>}
+          {run.status === "running" && run.pending && onAnswered && <ApprovalCard run={run} onAnswered={onAnswered} />}
+          {run.status === "running" && !run.pending && <div className="flex items-center gap-2 text-sm text-muted" role="status"><span className="skeleton h-4 w-4 rounded-full" />Working: each page load waits for the site&apos;s polite delay.</div>}
           {run.status === "error" && run.error && <p role="alert" className={cn("rounded-lg p-3 text-sm", run.error === "Stopped by you." ? "bg-surface-2 text-muted" : "bg-danger-soft/60 text-danger")}>{run.error}</p>}
           {run.answer && (
             <div className="rounded-xl border border-border bg-surface p-4">
@@ -127,18 +160,29 @@ function Turn({ run, compact, onStop, stopping }: { run: AgentRun; compact?: boo
   );
 }
 
-function Composer({ value, onChange, onSubmit, busy, disabled, followUp, fast, setFast, fastModel }: {
-  value: string; onChange: (v: string) => void; onSubmit: () => void; busy: boolean; disabled: boolean; followUp: boolean; fast: boolean; setFast: (v: boolean) => void; fastModel?: string;
+function Composer({ value, onChange, onSubmit, busy, disabled, followUp, model, setModel, ai, priv, setPriv, privLocked }: {
+  value: string; onChange: (v: string) => void; onSubmit: () => void; busy: boolean; disabled: boolean; followUp: boolean;
+  model: string; setModel: (v: string) => void; ai?: AiPublic; priv: boolean; setPriv: (v: boolean) => void; privLocked: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { ref.current?.focus(); }, [followUp]);
+  const name = (r?: { providerId: string; model: string }) => (r?.model ? `${r.model}${ai?.providers.find((p) => p.id === r.providerId)?.name ? ` · ${ai.providers.find((p) => p.id === r.providerId)!.name}` : ""}` : "");
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }} className="space-y-3 p-4">
       <Textarea ref={ref} aria-label={followUp ? "Follow-up question" : "Task for the agent"} value={value} onChange={(e) => onChange(e.target.value)} className="min-h-24"
         placeholder={followUp ? "Ask a follow-up, e.g. “Now track the top 3 and alert me below ₹2,000”" : "Find the best real deals on 55-inch TVs on Amazon India…"}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !disabled) { e.preventDefault(); onSubmit(); } }} />
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="w-72 max-w-full"><Switch checked={fast} onChange={setFast} label="Fast model" description={`Use ${fastModel || "the fast model"} for quick, cheap jobs.`} /></div>
+        <div className="flex flex-wrap items-center gap-4">
+          <Select aria-label="Model" className="h-9 w-72 max-w-full" value={model} onChange={(e) => setModel(e.target.value)}>
+            <option value="main">Main model{ai?.main.model ? `: ${name(ai.main)}` : ""}</option>
+            <option value="fast">Fast model{ai?.fast.model ? `: ${name(ai.fast)}` : " (same as main)"}</option>
+            {ai?.providers.filter((p) => p.enabled && p.models.length).map((p) => (
+              <optgroup key={p.id} label={p.name}>{p.models.map((m) => <option key={m.id} value={`${p.id}::${m.id}`}>{m.id}</option>)}</optgroup>
+            ))}
+          </Select>
+          <Switch checked={priv || privLocked} disabled={privLocked} onChange={setPriv} label="Private" description={privLocked ? "On for everything in Settings → Privacy" : "Kept in memory only, never saved"} />
+        </div>
         <div className="flex items-center gap-3">
           <span className="hidden text-xs text-muted sm:inline"><Kbd>Ctrl</Kbd> <Kbd>Enter</Kbd></span>
           <Button type="submit" loading={busy} disabled={disabled} icon={<Send className="size-4" />}>{followUp ? "Ask" : "Run"}</Button>
@@ -155,18 +199,21 @@ function AgentPage() {
   const [debounced, setDebounced] = useState("");
   useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 300); return () => clearTimeout(t); }, [q]);
   const history = useApi<{ runs: AgentRun[] }>(`/api/agent/runs?limit=50${debounced ? `&q=${encodeURIComponent(debounced)}` : ""}`);
-  const settings = useApi<{ settings: { ai: { baseUrl: string; model: string; fastModel: string } } }>("/api/settings");
+  const settings = useApi<{ settings: { ai: AiPublic } }>("/api/settings");
+  const catalog = useApi<Catalog>("/api/agent");
   const [running, setRunning] = useState(false);
   const detail = useApi<Detail>(selected ? `/api/agent/runs/${selected}` : null, { pollMs: running ? 1200 : undefined });
   const [prompt, setPrompt] = useState("");
-  const [fast, setFast] = useState(false);
+  const [model, setModel] = useState("main");
+  const [priv, setPriv] = useState(false);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [del, setDel] = useState<AgentRun | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
   const ai = settings.data?.settings.ai;
-  const configured = Boolean(ai?.baseUrl && (ai.model || ai.fastModel));
+  const configured = Boolean(ai && ((ai.main.providerId && ai.main.model) || (ai.fast.providerId && ai.fast.model)));
+  const privLocked = Boolean(catalog.data?.privateMode);
   const run = detail.data?.run.id === selected ? detail.data.run : null;
   const isRunning = run?.status === "running";
   if (isRunning !== running) setRunning(isRunning);
@@ -184,7 +231,7 @@ function AgentPage() {
     if (prompt.trim().length < 3 || !configured) return;
     setStarting(true);
     try {
-      const r = await api<{ run: AgentRun }>("/api/agent", { body: { prompt, useFastModel: fast, followUpOf: run && run.status !== "running" ? run.id : undefined } });
+      const r = await api<{ run: AgentRun }>("/api/agent", { body: { prompt, model, private: priv || privLocked || run?.private || undefined, followUpOf: run && run.status !== "running" ? run.id : undefined } });
       setPrompt("");
       setSelected(r.run.id);
       void history.reload();
@@ -217,14 +264,14 @@ function AgentPage() {
       <PageHeader title="Agent" description="Ask in plain words. It scrapes, compares prices, tracks products and sets up watchers with your own AI model, and shows every step it takes."
         actions={selected ? <Button variant="secondary" icon={<MessageSquarePlus className="size-4" />} onClick={() => { setSelected(""); setPrompt(""); }}>New conversation</Button> : undefined} />
       {settings.data && !configured && (
-        <div className="mb-6"><Callout tone="warning" title="Connect a model first" action={<Link href="/settings?tab=ai"><Button size="sm">Open AI settings</Button></Link>}>Any OpenAI-compatible endpoint works: OpenAI, OpenRouter, Groq, Together, DeepSeek, or Ollama and LM Studio on this computer. The model must support tool calling.</Callout></div>
+        <div className="mb-6"><Callout tone="warning" title="Connect a model first" action={<Link prefetch={false} href="/settings?tab=ai"><Button size="sm">Open AI settings</Button></Link>}>Any OpenAI-compatible endpoint works: OpenAI, OpenRouter, Groq, Together, DeepSeek, or Ollama and LM Studio on this computer. The model must support tool calling.</Callout></div>
       )}
       <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
         <div className="min-w-0 space-y-6">
           {!selected ? (
             <>
               <Card>
-                <Composer value={prompt} onChange={setPrompt} onSubmit={start} busy={starting} disabled={!configured || prompt.trim().length < 3} followUp={false} fast={fast} setFast={setFast} fastModel={ai?.fastModel} />
+                <Composer value={prompt} onChange={setPrompt} onSubmit={start} busy={starting} disabled={!configured || prompt.trim().length < 3} followUp={false} model={model} setModel={setModel} ai={ai} priv={priv} setPriv={setPriv} privLocked={privLocked} />
               </Card>
               <div className="grid gap-4 md:grid-cols-2">
                 {EXAMPLES.map((g) => (
@@ -239,17 +286,28 @@ function AgentPage() {
                 ))}
               </div>
               <Card>
-                <CardHeader title="What it can do" description="The agent only acts through these tools. The ones marked “changes things” run only when you ask for that." />
-                <ul className="grid gap-x-6 gap-y-2 p-5 text-sm sm:grid-cols-2">
-                  {TOOLS.map((t) => (
-                    <li key={t.name} className="flex items-start gap-2">
-                      <Wrench className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden />
-                      <span><span className="font-medium">{t.label}</span> <span className="text-muted">{t.what}</span>{t.changes && <Badge tone="warning" className="ml-1.5">changes things</Badge>}</span>
-                    </li>
-                  ))}
-                </ul>
+                <CardHeader title="What it can do" description={catalog.data ? (catalog.data.approval === "ask"
+                  ? `Up to ${catalog.data.maxSteps} steps per question. Anything marked “asks first” waits for your OK.`
+                  : `Up to ${catalog.data.maxSteps} steps per question. Approvals are off in Settings → AI, so changes happen without asking.`) : undefined} />
+                {catalog.data ? (
+                  <div className="grid gap-5 p-5 md:grid-cols-2">
+                    {[...new Set(catalog.data.tools.map((t) => t.group))].map((g) => (
+                      <div key={g}>
+                        <p className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">{g}</p>
+                        <ul className="space-y-1 text-sm">
+                          {catalog.data!.tools.filter((t) => t.group === g).map((t) => (
+                            <li key={t.name} className="flex items-start gap-2" title={t.description}>
+                              <Wrench className="mt-0.5 size-3.5 shrink-0 text-muted" aria-hidden />
+                              <span><span className="font-medium">{TOOL_LABEL[t.name] ?? t.name}</span>{t.changes && <Badge tone="warning" className="ml-1.5">{catalog.data!.approval === "ask" ? "asks first" : "changes things"}</Badge>}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                ) : <div className="p-5"><div className="skeleton h-24 rounded-lg" /></div>}
               </Card>
-              <Callout icon={<ShieldCheck className="size-4 text-accent" />} title="Safety">Page content is passed to the model as data, and instructions found on pages are ignored. It never runs code the model writes and never tries to get past bot checks or logins. Every run counts towards your daily AI limit in Settings.</Callout>
+              <Callout icon={<ShieldCheck className="size-4 text-accent" />} title="Safety">Page content is passed to the model as data, and instructions found on pages are ignored. It never runs code the model writes, never types passwords and stops at bot checks and logins. Every run counts towards your daily AI limit in Settings.</Callout>
             </>
           ) : detail.error && !run ? (
             <ErrorNote message={detail.error} onRetry={detail.reload} />
@@ -263,14 +321,14 @@ function AgentPage() {
                 {detail.data!.thread.map((t) => (
                   <div key={t.id} className="opacity-90"><Turn run={t} compact /></div>
                 ))}
-                <Turn run={run} onStop={stop} stopping={stopping} />
+                <Turn run={run} onStop={stop} stopping={stopping} onAnswered={() => void detail.reload()} />
                 <div ref={bottom} />
               </div>
               <div className="border-t border-border">
                 {isRunning ? (
                   <p className="p-4 text-sm text-muted">You can ask a follow-up once this answer is finished.</p>
                 ) : (
-                  <Composer value={prompt} onChange={setPrompt} onSubmit={start} busy={starting} disabled={!configured || prompt.trim().length < 3} followUp fast={fast} setFast={setFast} fastModel={ai?.fastModel} />
+                  <Composer value={prompt} onChange={setPrompt} onSubmit={start} busy={starting} disabled={!configured || prompt.trim().length < 3} followUp model={model} setModel={setModel} ai={ai} priv={priv} setPriv={setPriv} privLocked={privLocked} />
                 )}
               </div>
             </Card>
@@ -291,6 +349,8 @@ function AgentPage() {
                   <button type="button" onClick={() => setSelected(r.id)} className="w-full px-4 py-3 pr-10 text-left hover:bg-surface-2/50">
                     <p className="line-clamp-2 text-sm">{r.parent_id && <CornerDownRight className="mr-1 inline size-3.5 text-muted" aria-label="Follow-up" />}{r.prompt}</p>
                     <p className="mt-1 flex items-center gap-2 text-xs text-muted">
+                      {r.private && <Badge><EyeOff className="size-3" />private</Badge>}
+                      {r.pending && <Badge tone="warning">waiting for you</Badge>}
                       <Badge tone={r.status === "done" ? "success" : r.status === "error" ? (r.error === "Stopped by you." ? "neutral" : "danger") : "accent"}>{r.status === "error" && r.error === "Stopped by you." ? "stopped" : r.status}</Badge>
                       {timeAgo(r.created_at)}
                     </p>

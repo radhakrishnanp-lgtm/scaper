@@ -1,14 +1,15 @@
 "use client";
 
-import { Suspense, use, useMemo, useState } from "react";
+import { Suspense, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarClock, Code2, Copy, Database, Eraser, History, MoreHorizontal, Pause, Pencil, Play, Trash2, Webhook } from "lucide-react";
+import { CalendarClock, Code2, Copy, Database, Eraser, History, MoreHorizontal, Pause, Pencil, Play, Sparkles, Trash2, Webhook } from "lucide-react";
+import type { Cell } from "@/lib/types";
 import type { Task } from "@/server/repo/scrapes";
 import type { Job } from "@/server/repo/jobs";
 import { BarChart } from "@/components/charts";
-import { CopyButton } from "@/components/data-table";
-import { ConfirmDialog } from "@/components/dialog";
+import { CopyButton, DataTable } from "@/components/data-table";
+import { ConfirmDialog, Dialog } from "@/components/dialog";
 import { useLive } from "@/components/live";
 import { Menu } from "@/components/menu";
 import { ScrapeResultView, type RunView } from "@/components/scrape-result";
@@ -23,6 +24,48 @@ import { useQueryState } from "@/lib/use-query-state";
 
 type Detail = { task: Task; trend: { created_at: string; row_count: number; status: string; duration_ms: number }[]; jobs: Job[]; seen: number; nextRuns: string[] };
 type View = "data" | "runs" | "jobs" | "setup" | "api";
+type Heal = { url: string; before: number; after: number; extract: Task["extract"]; sample: Record<string, Cell>[]; note: string | null; unchanged: string[] };
+
+/** "Fix with AI": your model proposes new selectors for the same columns, tested on the live page; you decide. */
+function HealDialog({ id, onClose, onApplied }: { id: string; onClose: () => void; onApplied: () => void }) {
+  const toast = useToast();
+  const [res, setRes] = useState<Heal | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [applying, setApplying] = useState(false);
+  useEffect(() => {
+    let stop = false;
+    api<Heal>(`/api/tasks/${id}/heal`, { method: "POST" }).then((r) => { if (!stop) setRes(r); }, (e) => { if (!stop) setErr(errorText(e)); }).finally(() => { if (!stop) setBusy(false); });
+    return () => { stop = true; };
+  }, [id]);
+  const apply = async () => {
+    if (!res) return;
+    setApplying(true);
+    try { await api(`/api/tasks/${id}/heal`, { body: { apply: res.extract } }); toast.success("New selectors saved", "The next run uses them."); onApplied(); }
+    catch (e) { toast.error("Could not save", errorText(e)); } finally { setApplying(false); }
+  };
+  return (
+    <Dialog open onClose={onClose} xl title="Fix with AI" description="Your model looks at the page as it is today and proposes selectors for the same columns. Transforms and other settings stay."
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button>{res && res.after > 0 && <Button icon={<Sparkles className="size-4" />} loading={applying} onClick={apply}>Use the new selectors</Button>}</>}>
+      {busy ? <div className="space-y-2"><p className="text-sm text-muted">Loading the page and asking your model. This takes 10 to 40 seconds.</p><LoadingRows rows={3} /></div>
+        : err ? <Callout tone="danger" title="Could not fix">{err}</Callout>
+        : res && (
+          <div className="space-y-4">
+            <Callout tone={res.after > res.before ? "success" : res.after ? "neutral" : "warning"} title={`Old selectors: ${plural(res.before, "row")} · New: ${plural(res.after, "row")}`}>
+              {res.note}{res.unchanged.length ? ` Unchanged: ${res.unchanged.join(", ")}.` : ""} Tested on <a className="text-accent hover:underline" href={res.url} target="_blank" rel="noreferrer">{hostOf(res.url)}</a>.
+            </Callout>
+            {res.extract.type === "selectors" && (
+              <div className="rounded-lg bg-surface-2/60 p-3 font-mono text-xs">
+                {res.extract.itemSelector && <p><span className="text-muted">item:</span> {res.extract.itemSelector}</p>}
+                {res.extract.fields.map((f) => <p key={f.name}><span className="text-muted">{f.name}:</span> {f.selector}{f.attr !== "text" ? ` @${f.attr}` : ""}</p>)}
+              </div>
+            )}
+            {res.sample.length > 0 && <div className="overflow-hidden rounded-xl border border-border"><DataTable dataset={{ name: "Sample", columns: Object.keys(res.sample[0]!), rows: res.sample }} compact /></div>}
+          </div>
+        )}
+    </Dialog>
+  );
+}
 
 function TaskDetail({ id }: { id: string }) {
   const router = useRouter();
@@ -35,6 +78,7 @@ function TaskDetail({ id }: { id: string }) {
   const [view, setView] = useQueryState<View>("view", "data");
   const [confirm, setConfirm] = useState<"delete" | "seen" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [heal, setHeal] = useState(false);
 
   const running = live.active.find((j) => j.ref_id === id && (j.status === "running" || j.status === "queued"));
   const trend = useMemo(() => (data?.trend ?? []).map((r) => ({
@@ -89,8 +133,9 @@ function TaskDetail({ id }: { id: string }) {
         description={<><a href={t.url} target="_blank" rel="noreferrer noopener" className="text-accent hover:underline">{hostOf(t.url)}</a> · {t.mode} · {scheduleText(t.schedule_minutes, t.cron)}{t.tags.map((x) => <Badge key={x} className="ml-1.5">{x}</Badge>)}</>}
         actions={<>
           <Button icon={<Play className="size-4" />} loading={busy === "run"} disabled={Boolean(running)} onClick={runNow}>{running ? "Running…" : "Run now"}</Button>
-          <Link href={`/tasks/${id}/edit`}><Button variant="secondary" icon={<Pencil className="size-4" />}>Edit</Button></Link>
+          <Link prefetch={false} href={`/tasks/${id}/edit`}><Button variant="secondary" icon={<Pencil className="size-4" />}>Edit</Button></Link>
           <Menu label="More task actions" trigger={(p) => <IconButton {...p} label="More actions"><MoreHorizontal className="size-4" /></IconButton>} items={[
+            ...(t.extract.type === "selectors" ? [{ label: "Fix selectors with AI", icon: <Sparkles />, onSelect: () => setHeal(true) }] : []),
             { label: "Duplicate", icon: <Copy />, onSelect: () => void duplicate() },
             ...(isScheduled(t) ? [{ label: isPaused(t) ? "Resume schedule" : "Pause schedule", icon: <CalendarClock />, onSelect: () => void pause(!isPaused(t)) }] : []),
             ...(data.seen ? [{ label: `Forget ${data.seen} seen items`, icon: <Eraser />, onSelect: () => setConfirm("seen") }] : []),
@@ -106,14 +151,14 @@ function TaskDetail({ id }: { id: string }) {
           <Card className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className="flex items-center gap-2"><JobStatusBadge status={running.status} />{running.progress.label ?? "Starting…"}</span>
-              <Link href={`/runs/${running.id}`} className="font-medium text-accent hover:underline">Live log</Link>
+              <Link prefetch={false} href={`/runs/${running.id}`} className="font-medium text-accent hover:underline">Live log</Link>
             </div>
             <Progress className="mt-3" label="Task progress" value={running.progress.total ? running.progress.done ?? 0 : null} max={running.progress.total ?? 100} />
             {running.progress.rows !== undefined && <p className="mt-1.5 text-xs text-muted">{plural(running.progress.rows, "row")} so far</p>}
           </Card>
         )}
         {isPaused(t) && <Callout tone="warning" icon={<Pause className="size-4 text-warning" />} title="The schedule is paused" action={<Button size="sm" variant="secondary" onClick={() => void pause(false)}>Resume</Button>}>It keeps its settings and runs when you press Run now.</Callout>}
-        {failures >= 3 && <Callout tone="danger" title={`${failures} of the last 10 runs failed`}>Open a failed run on the Jobs tab to see why. A site redesign usually means a selector needs updating.</Callout>}
+        {failures >= 3 && <Callout tone="danger" title={`${failures} of the last 10 runs failed`} action={t.extract.type === "selectors" ? <Button size="sm" variant="secondary" icon={<Sparkles className="size-4" />} onClick={() => setHeal(true)}>Fix with AI</Button> : undefined}>Open a failed run on the Jobs tab to see why. A site redesign usually means a selector needs updating.</Callout>}
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <Stat label="Last run" value={<RunStatusBadge status={t.last_status} />} hint={timeAgo(t.last_run_at)} />
@@ -153,7 +198,7 @@ function TaskDetail({ id }: { id: string }) {
                   <ul className="divide-y divide-border">
                     {runs.data.items.map((r) => (
                       <li key={r.id}>
-                        <Link href={`/history/${r.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 hover:bg-surface-2/40">
+                        <Link prefetch={false} href={`/history/${r.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 hover:bg-surface-2/40">
                           <RunStatusBadge status={r.status} />
                           <span className="text-sm">{dateTime(r.created_at)}</span>
                           <span className="text-sm text-muted tabular-nums">{plural(r.row_count, "row")} · {plural(r.page_count, "page")} · {duration(r.duration_ms)}</span>
@@ -172,7 +217,7 @@ function TaskDetail({ id }: { id: string }) {
                   <ul className="divide-y divide-border">
                     {data.jobs.map((j) => (
                       <li key={j.id}>
-                        <Link href={`/runs/${j.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 hover:bg-surface-2/40">
+                        <Link prefetch={false} href={`/runs/${j.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 hover:bg-surface-2/40">
                           <JobStatusBadge status={j.status} />
                           <span className="text-sm">{dateTime(j.created_at)}</span>
                           <Badge>{j.trigger}</Badge>
@@ -207,7 +252,7 @@ function TaskDetail({ id }: { id: string }) {
 
             {view === "api" && (
               <Card className="space-y-4 p-5 text-sm">
-                <p className="text-muted">Start this task from scripts, cron jobs or other tools on this computer. Create a token in <Link href="/settings?tab=api" className="text-accent hover:underline">Settings → API</Link>.</p>
+                <p className="text-muted">Start this task from scripts, cron jobs or other tools on this computer. Create a token in <Link prefetch={false} href="/settings?tab=api" className="text-accent hover:underline">Settings → API</Link>.</p>
                 {[
                   { label: "Run and wait for the result (up to 90 s)", cmd: `curl -X POST -H "Authorization: Bearer $SCAPER_TOKEN" ${origin}/api/tasks/${id}/run` },
                   { label: "Start without waiting", cmd: `curl -X POST -H "Authorization: Bearer $SCAPER_TOKEN" "${origin}/api/tasks/${id}/run?wait=0"` },
@@ -225,6 +270,7 @@ function TaskDetail({ id }: { id: string }) {
         </div>
       </div>
 
+      {heal && <HealDialog id={id} onClose={() => setHeal(false)} onApplied={() => { setHeal(false); void reload(); }} />}
       <ConfirmDialog
         open={Boolean(confirm)}
         onCancel={() => setConfirm(null)}

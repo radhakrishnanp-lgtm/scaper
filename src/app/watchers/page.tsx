@@ -79,7 +79,7 @@ function WatchersPage() {
         description="Pages, prices, feeds, APIs and uptime, checked on a schedule. Alerts only when your rules match."
         actions={<>
           <Button variant="secondary" icon={<ListPlus className="size-4" />} onClick={() => setImportOpen(true)}>Import URLs</Button>
-          <Link href="/watchers/new"><Button icon={<Plus className="size-4" />}>New watcher</Button></Link>
+          <Link prefetch={false} href="/watchers/new"><Button icon={<Plus className="size-4" />}>New watcher</Button></Link>
         </>}
       />
 
@@ -88,7 +88,7 @@ function WatchersPage() {
           <EmptyState icon={<Radar className="size-5" />} title="No watchers yet">Pick what you want to keep an eye on:</EmptyState>
           <div className="grid grid-cols-2 gap-3 border-t border-border p-5 md:grid-cols-4">
             {TARGETS.map((t) => (
-              <Link key={t.type} href={`/watchers/new?type=${t.type}`} className="rounded-xl border border-border p-4 transition-colors hover:border-accent hover:bg-accent-soft/30">
+              <Link prefetch={false} key={t.type} href={`/watchers/new?type=${t.type}`} className="rounded-xl border border-border p-4 transition-colors hover:border-accent hover:bg-accent-soft/30">
                 <span className="text-accent">{t.icon}</span>
                 <p className="mt-2 text-sm font-medium">{t.label}</p>
                 <p className="text-xs text-muted">{t.description}</p>
@@ -151,7 +151,7 @@ function WatchersPage() {
                         <td className="max-w-xs px-3 py-3">
                           <div className="flex items-center gap-2">
                             <span className="text-muted [&>svg]:size-4" title={info.label}>{info.icon}</span>
-                            <Link href={`/watchers/${w.id}`} className="truncate font-medium hover:text-accent">{w.name}</Link>
+                            <Link prefetch={false} href={`/watchers/${w.id}`} className="truncate font-medium hover:text-accent">{w.name}</Link>
                           </div>
                           <p className="truncate text-xs text-muted">{hostOf(w.url)} · every {interval(w.interval_minutes)}{w.options.cron ? " (cron)" : ""}</p>
                           {w.tags.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{w.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>}

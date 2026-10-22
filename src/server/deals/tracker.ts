@@ -128,7 +128,7 @@ export async function scanListing(input: { url: string; minDiscount: number; ran
       const res = await chat([
         { role: "system", content: `You are a careful shopping analyst. Given products, pick the best real deals. Prefer big discounts on well-rated items with many reviews. Flag discounts that look inflated. Reply with JSON {"picks":[{"index":0,"note":"short reason"}]}, best first, at most 10. ${UNTRUSTED_NOTE}` },
         { role: "user", content: `<page>${JSON.stringify(compact)}</page>` },
-      ], { model: "fast", json: true, temperature: 0, maxTokens: 900 });
+      ], { model: "fast", json: true, temperature: 0, maxTokens: 900, purpose: "deals" });
       const picks = aiPickSchema.parse(parseJsonReply(res.content)).picks.filter((p) => top[p.index]);
       const chosen = new Set(picks.map((p) => p.index));
       const ranked = picks.map((p) => ({ ...top[p.index]!, aiNote: p.note }));

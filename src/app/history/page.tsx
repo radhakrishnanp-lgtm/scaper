@@ -2,14 +2,15 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Database, Download, MoreHorizontal, Trash2 } from "lucide-react";
+import { Database, Download, EyeOff, History, List, MoreHorizontal, Trash2 } from "lucide-react";
+import { Timeline } from "@/components/timeline";
 import type { Task } from "@/server/repo/scrapes";
 import { ConfirmDialog } from "@/components/dialog";
 import { Menu } from "@/components/menu";
 import type { RunView } from "@/components/scrape-result";
 import { RunStatusBadge } from "@/components/status";
 import { useToast } from "@/components/toast";
-import { Button, Card, Checkbox, EmptyState, ErrorNote, FilterChips, IconButton, LoadingRows, PageHeader, SearchInput, Select } from "@/components/ui";
+import { Badge, Button, Card, Checkbox, EmptyState, ErrorNote, FilterChips, IconButton, LoadingRows, PageHeader, SearchInput, Select, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api-client";
 import { dateTime, duration, hostOf, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -19,6 +20,21 @@ type RunsPage = { items: RunView[]; nextCursor: string | null };
 type Status = "all" | "ok" | "partial" | "error" | "blocked";
 
 function DataPage() {
+  const [view, setView] = useQueryState<"results" | "timeline">("view", "results");
+  return (
+    <>
+      <PageHeader
+        title="Data"
+        description="The rows from every scrape and task run, and a timeline of everything Scaper did."
+        actions={<a href="/api/data/export"><Button variant="secondary" icon={<Download className="size-4" />}>Back up everything (JSON)</Button></a>}
+      />
+      <Tabs className="mb-4" value={view} onChange={setView} tabs={[{ value: "results", label: "Results", icon: <List className="size-4" /> }, { value: "timeline", label: "Timeline", icon: <History className="size-4" /> }]} />
+      {view === "timeline" ? <Timeline /> : <Results />}
+    </>
+  );
+}
+
+function Results() {
   const toast = useToast();
   const [status, setStatus] = useQueryState<Status>("status", "all");
   const [task, setTask] = useQueryState<string>("task", "");
@@ -67,11 +83,6 @@ function DataPage() {
 
   return (
     <>
-      <PageHeader
-        title="Data"
-        description="The rows from every scrape and task run. Open one to filter, sort and export it."
-        actions={<a href="/api/data/export"><Button variant="secondary" icon={<Download className="size-4" />}>Back up everything (JSON)</Button></a>}
-      />
       <Card>
         <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
           <FilterChips label="Status" value={status} onChange={setStatus} options={[
@@ -93,7 +104,7 @@ function DataPage() {
           </div>
         )}
         {error ? <div className="p-4"><ErrorNote message={error} onRetry={reload} /></div> : loading && !data ? <LoadingRows rows={6} /> : items.length === 0 ? (
-          <EmptyState icon={<Database className="size-5" />} title="No data here" action={<Link href="/scrape"><Button>Quick scrape</Button></Link>}>
+          <EmptyState icon={<Database className="size-5" />} title="No data here" action={<Link prefetch={false} href="/scrape"><Button>Quick scrape</Button></Link>}>
             {status === "all" && !task && !debounced ? "Results from scrapes and tasks appear here." : "Try other filters."}
           </EmptyState>
         ) : (
@@ -116,7 +127,7 @@ function DataPage() {
                   <tr key={r.id} className="hover:bg-surface-2/40">
                     <td className="px-4 py-3"><Checkbox hideLabel label="Select" checked={selected.has(r.id)} onChange={(v) => { const n = new Set(selected); if (v) n.add(r.id); else n.delete(r.id); setSelected(n); }} /></td>
                     <td className="max-w-sm px-3 py-3">
-                      <Link href={`/history/${r.id}`} className="block truncate font-medium hover:text-accent">{r.recipe_name ?? hostOf(r.url)}</Link>
+                      <Link prefetch={false} href={`/history/${r.id}`} className="block truncate font-medium hover:text-accent">{r.private && <Badge className="mr-1.5"><EyeOff className="size-3" />private</Badge>}{r.recipe_name ?? hostOf(r.url)}</Link>
                       <p className="truncate text-xs text-muted">{r.url}</p>
                       {r.error && <p className="truncate text-xs text-danger" title={r.error}>{r.error}</p>}
                     </td>
@@ -142,7 +153,7 @@ function DataPage() {
         )}
         {next && <div className="border-t border-border p-3 text-center"><Button variant="ghost" loading={more} onClick={loadMore}>Load more</Button></div>}
       </Card>
-      <p className="mt-3 text-xs text-muted">Scaper keeps the newest results up to the limit in <Link href="/settings?tab=data" className="text-accent hover:underline">Settings → Data</Link>.</p>
+      <p className="mt-3 text-xs text-muted">Scaper keeps the newest results up to the limit in <Link prefetch={false} href="/settings?tab=data" className="text-accent hover:underline">Settings → Data</Link>.</p>
 
       <ConfirmDialog open={Boolean(confirm)} onCancel={() => setConfirm(null)} onConfirm={() => confirm && void remove(confirm)} busy={deleting}
         title={confirm?.length === 1 ? "Delete this result?" : `Delete ${confirm?.length ?? 0} results?`} body="The scraped rows are removed. Tasks and their schedules are not affected." />

@@ -6,6 +6,7 @@ import {
   type Job, type JobKind, type JobLog, type JobProgress, type JobTrigger,
 } from "../repo/jobs";
 import { getSettings } from "../repo/settings";
+import { withWork } from "../privacy";
 
 /**
  * Durable job queue on SQLite. Every piece of background work (task runs, watcher
@@ -53,6 +54,8 @@ function emit(j: Job) {
 export type EnqueueInput = {
   kind: JobKind; refId?: string | null; title: string; trigger?: JobTrigger; input?: Record<string, unknown>;
   priority?: number; maxAttempts?: number; runAfter?: string;
+  /** Keep the job, its logs and its result in memory only. */
+  private?: boolean;
   /** Return the existing queued/running job for the same ref instead of adding another. */
   unique?: boolean;
 };
@@ -158,7 +161,7 @@ async function execute(job: Job) {
   const handler = state.handlers.get(job.kind);
   try {
     if (!handler) throw new Error(`No handler for job kind "${job.kind}".`);
-    const result = await handler(ctx);
+    const result = await withWork({ private: job.private, refId: job.id }, () => handler(ctx));
     if (ctrl.signal.aborted) {
       // Work done before the cancel (rows scraped so far) is kept with the cancelled job.
       ctx.log("warn", "Cancelled.");

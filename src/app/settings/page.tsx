@@ -1,133 +1,25 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Bookmark, Bot, Database, Download, FileUp, Globe, HardDrive, Info, KeyRound, Mail, MessageCircle, Plus, Save, Send, ShieldCheck, Smartphone, Trash2, Webhook, Hash } from "lucide-react";
-import type { PublicSettings } from "@/server/repo/settings";
+import { Bell, Bookmark, Bot, Database, EyeOff, Download, FileUp, Globe, HardDrive, Info, KeyRound, Mail, MessageCircle, Plus, Save, Send, ShieldCheck, Smartphone, Trash2, Webhook, Hash } from "lucide-react";
+import { Panel, TestButton, useSection, type S, type SettingsResponse } from "@/components/settings-bits";
+import { AiSettings } from "@/components/ai-settings";
+import { PrivacySettings } from "@/components/privacy-settings";
 import type { ApiToken } from "@/server/repo/tokens";
 import type { ImportReport } from "@/server/ops/config";
-import { BarChart } from "@/components/charts";
 import { CopyButton } from "@/components/data-table";
 import { ConfirmDialog, Dialog } from "@/components/dialog";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Callout, Card, CardHeader, Code, ErrorNote, Field, Input, Kbd, KeyValue, LoadingRows, PageHeader, Progress, Select, Switch, Tabs } from "@/components/ui";
-import { api, ClientApiError, errorText } from "@/lib/api-client";
-import { bytes, dateTime, lastDays, shortDay, timeAgo } from "@/lib/format";
+import { Badge, Button, Callout, Card, Code, ErrorNote, Field, Input, Kbd, KeyValue, LoadingRows, PageHeader, Select, Switch, Tabs } from "@/components/ui";
+import { api, errorText } from "@/lib/api-client";
+import { bytes, dateTime, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
 
-type S = PublicSettings;
-type Tab = "ai" | "scraping" | "alerts" | "data" | "api" | "about";
-type Resp = { settings: S; usage: { requests: number; tokens: number }; passwordProtected: boolean };
+type Tab = "ai" | "scraping" | "alerts" | "data" | "privacy" | "api" | "about";
+type Resp = SettingsResponse;
 
-const PROVIDERS = [
-  { label: "OpenAI", url: "https://api.openai.com/v1" }, { label: "OpenRouter", url: "https://openrouter.ai/api/v1" },
-  { label: "Groq", url: "https://api.groq.com/openai/v1" }, { label: "Together", url: "https://api.together.xyz/v1" },
-  { label: "DeepSeek", url: "https://api.deepseek.com/v1" }, { label: "Mistral", url: "https://api.mistral.ai/v1" },
-  { label: "Ollama (local)", url: "http://localhost:11434/v1" }, { label: "LM Studio (local)", url: "http://localhost:1234/v1" },
-];
-
-/** Saves one settings section; secrets come back masked and masked values mean "unchanged". */
-function useSection<K extends keyof S>(initial: S[K], key: K, onSaved: (s: S) => void) {
-  const toast = useToast();
-  const [v, setV] = useState(initial);
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const save = async (extra: Record<string, unknown> = {}) => {
-    setSaving(true); setErrors({});
-    const body: Record<string, unknown> = { ...v, ...extra };
-    for (const k of ["hasApiKey", "hasTelegramToken", "hasSmtpPass"]) delete body[k];
-    try {
-      const res = await api<{ settings: S }>("/api/settings", { method: "PUT", body: { [key]: body } });
-      setV(res.settings[key]); onSaved(res.settings);
-      toast.success("Settings saved");
-      return true;
-    } catch (e) {
-      if (e instanceof ClientApiError && e.fields) setErrors(Object.fromEntries(Object.entries(e.fields).map(([p, m]) => [p.replace(`${String(key)}.`, ""), m])));
-      toast.error("Could not save", errorText(e));
-      return false;
-    } finally { setSaving(false); }
-  };
-  const set = (patch: Partial<S[K]>) => setV((x) => ({ ...x, ...patch }));
-  return { v, set, save, saving, errors };
-}
-
-function TestButton({ channel, label = "Send test" }: { channel: string; label?: string }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  return (
-    <Button type="button" size="sm" variant="secondary" loading={busy} onClick={async () => {
-      setBusy(true);
-      try { const r = await api<{ message: string }>("/api/settings/test", { body: { channel } }); toast.success("It works", r.message); }
-      catch (e) { toast.error("Test failed", errorText(e)); } finally { setBusy(false); }
-    }}>{label}</Button>
-  );
-}
-
-function Panel({ title, description, icon, children, footer }: { title: string; description?: ReactNode; icon?: ReactNode; children: ReactNode; footer?: ReactNode }) {
-  return (
-    <Card>
-      <CardHeader title={<span className="flex items-center gap-2">{icon}{title}</span>} description={description} />
-      <div className="space-y-4 p-5">{children}</div>
-      {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>}
-    </Card>
-  );
-}
-
-function AiTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
-  const s = useSection(data.settings.ai, "ai", onSaved);
-  const usage = useApi<{ today: { requests: number; tokens: number }; history: { day: string; requests: number; tokens: number }[]; limit: number; configured: boolean }>("/api/ai/usage");
-  const [key, setKey] = useState("");
-  const [removeKey, setRemoveKey] = useState(false);
-  const v = s.v;
-  const days = lastDays(30);
-  const byDay = new Map((usage.data?.history ?? []).map((h) => [h.day, h]));
-  return (
-    <div className="space-y-6">
-      <Panel title="Your model" icon={<Bot className="size-4 text-muted" />} description="Any OpenAI-compatible endpoint: a cloud provider with your key, or a model running on this computer."
-        footer={<>
-          <TestButton channel="ai" label="Test main model" />
-          <TestButton channel="ai_fast" label="Test fast model" />
-          <Button icon={<Save className="size-4" />} loading={s.saving} onClick={async () => { if (await s.save(key ? { apiKey: key } : {})) setKey(""); }}>Save</Button>
-        </>}>
-        <div className="flex flex-wrap gap-1.5">{PROVIDERS.map((p) => <button key={p.url} type="button" onClick={() => s.set({ baseUrl: p.url })} className={`h-7 rounded-full border px-2.5 text-xs ${v.baseUrl === p.url ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:text-text"}`}>{p.label}</button>)}</div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Base URL" error={s.errors.baseUrl}>{(p) => <Input {...p} className="font-mono text-xs" value={v.baseUrl} onChange={(e) => s.set({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" />}</Field>
-          <Field label="API key" hint={v.hasApiKey ? `Saved (${v.apiKey}). Type a new one to replace it.` : "Stored only in your local database; never sent to the browser."}>
-            {(p) => <Input {...p} type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder={v.hasApiKey ? "••••••••" : "sk-…"} />}
-          </Field>
-          <Field label="Main model" hint="For the agent and AI extraction.">{(p) => <Input {...p} className="font-mono text-xs" value={v.model} onChange={(e) => s.set({ model: e.target.value })} placeholder="gpt-4.1" />}</Field>
-          <Field label="Fast model" hint="For selectors, change summaries, deal ranking. Empty = main model.">{(p) => <Input {...p} className="font-mono text-xs" value={v.fastModel} onChange={(e) => s.set({ fastModel: e.target.value })} placeholder="gpt-4.1-mini" />}</Field>
-        </div>
-        {v.hasApiKey && <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => setRemoveKey(true)}>Remove saved key</Button>}
-        <ConfirmDialog open={removeKey} onCancel={() => setRemoveKey(false)} title="Remove the saved API key?" confirmLabel="Remove" body="AI features stop working until you add a key again (local models without a key keep working)."
-          onConfirm={async () => { await s.save({ apiKey: "" }); setRemoveKey(false); }} />
-      </Panel>
-
-      <Panel title="Limits" description="A guard against runaway costs." footer={<Button icon={<Save className="size-4" />} loading={s.saving} onClick={() => void s.save()}>Save</Button>}>
-        <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Requests per day" error={s.errors.dailyRequestLimit}>{(p) => <Input {...p} type="number" min={1} value={v.dailyRequestLimit} onChange={(e) => s.set({ dailyRequestLimit: Number(e.target.value) || 1 })} />}</Field>
-          <Field label="Max tokens per answer">{(p) => <Input {...p} type="number" min={64} max={32000} value={v.maxTokens} onChange={(e) => s.set({ maxTokens: Number(e.target.value) || 64 })} />}</Field>
-          <Field label="Agent steps per request">{(p) => <Input {...p} type="number" min={1} max={25} value={v.agentMaxSteps} onChange={(e) => s.set({ agentMaxSteps: Number(e.target.value) || 1 })} />}</Field>
-        </div>
-      </Panel>
-
-      <Panel title="Usage" description="Counted by Scaper on this computer; your provider's bill is the final word.">
-        {usage.data ? (
-          <>
-            <div className="max-w-md">
-              <div className="mb-1 flex justify-between text-sm"><span>Today</span><span className="tabular-nums">{usage.data.today.requests} / {usage.data.limit} requests · {usage.data.today.tokens.toLocaleString("en-IN")} tokens</span></div>
-              <Progress label="AI requests today" value={usage.data.today.requests} max={usage.data.limit} tone={usage.data.today.requests / usage.data.limit > 0.8 ? "warning" : "accent"} />
-            </div>
-            <BarChart label="AI requests per day" height={130} data={days.map((d) => ({ label: shortDay(d), values: { r: byDay.get(d)?.requests ?? 0 } }))} series={[{ key: "r", label: "Requests", color: "var(--accent)" }]} emptyText="No AI requests in the last 30 days." />
-          </>
-        ) : <div className="skeleton h-32 rounded-lg" />}
-      </Panel>
-
-      <Callout icon={<ShieldCheck className="size-4 text-accent" />} title="How Scaper uses your model">It sends page text as data and never runs code the model writes. Instructions found inside scraped pages are ignored. Selectors the model proposes are tested on the page before you can use them.</Callout>
-    </div>
-  );
-}
 
 function ScrapingTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
   const s = useSection(data.settings.scraping, "scraping", onSaved);
@@ -437,8 +329,8 @@ function AboutTab({ data }: { data: Resp }) {
       </Panel>
       <Panel title="Help">
         <ul className="space-y-1 text-sm">
-          <li><Link href="/tasks/new" className="text-accent hover:underline">Start a task from a template</Link></li>
-          <li><Link href="/watchers/new" className="text-accent hover:underline">Create a watcher</Link></li>
+          <li><Link prefetch={false} href="/tasks/new" className="text-accent hover:underline">Start a task from a template</Link></li>
+          <li><Link prefetch={false} href="/watchers/new" className="text-accent hover:underline">Create a watcher</Link></li>
           <li className="text-muted">Guides in the docs folder: README, RUNBOOK (backups, restore, troubleshooting), API, SECURITY.</li>
         </ul>
       </Panel>
@@ -455,19 +347,21 @@ function SettingsPage() {
     <>
       <PageHeader title="Settings" description="Everything is stored in your local database. Secrets never reach the browser." />
       <Tabs value={tab} onChange={setTab} className="mb-6" tabs={[
-        { value: "ai", label: "AI model", icon: <Bot className="size-4" /> },
+        { value: "ai", label: "AI", icon: <Bot className="size-4" /> },
         { value: "scraping", label: "Scraping", icon: <Globe className="size-4" /> },
         { value: "alerts", label: "Alerts", icon: <Bell className="size-4" /> },
         { value: "data", label: "Data & backups", icon: <Database className="size-4" /> },
+        { value: "privacy", label: "Privacy", icon: <EyeOff className="size-4" /> },
         { value: "api", label: "API & import", icon: <KeyRound className="size-4" /> },
         { value: "about", label: "About", icon: <Info className="size-4" /> },
       ]} />
       {loading || !data ? <Card><LoadingRows /></Card> : (
         <>
-          {tab === "ai" && <AiTab data={data} onSaved={onSaved} />}
+          {tab === "ai" && <AiSettings data={data} onSaved={onSaved} />}
           {tab === "scraping" && <ScrapingTab data={data} onSaved={onSaved} />}
           {tab === "alerts" && <AlertsTab data={data} onSaved={onSaved} />}
           {tab === "data" && <DataTab data={data} onSaved={onSaved} />}
+          {tab === "privacy" && <PrivacySettings data={data} onSaved={onSaved} />}
           {tab === "api" && <ApiTab />}
           {tab === "about" && <AboutTab data={data} />}
         </>

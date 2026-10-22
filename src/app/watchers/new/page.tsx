@@ -17,7 +17,7 @@ function NewWatcher() {
   return (
     <>
       <PageHeader title="New watcher" description="Scaper checks the page on a schedule and alerts you when your rules match."
-        actions={<Link href="/watchers"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Watchers</Button></Link>} />
+        actions={<Link prefetch={false} href="/watchers"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Watchers</Button></Link>} />
       <WatcherEditor key={params.toString()} initial={initial} />
     </>
   );

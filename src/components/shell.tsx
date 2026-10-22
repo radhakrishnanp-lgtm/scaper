@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-  Bell, BellRing, CheckCheck, ChevronsLeft, ChevronsRight, Loader2, LogOut, Menu as MenuIcon, Moon, Search, Square, Sun, X,
+  Bell, BellRing, CheckCheck, ChevronsLeft, ChevronsRight, EyeOff, Loader2, LogOut, Menu as MenuIcon, Moon, Search, Square, Sun, X,
 } from "lucide-react";
 import type { Job } from "@/server/repo/jobs";
 import { api } from "@/lib/api-client";
@@ -17,9 +17,26 @@ import { NAV, isActive } from "./nav";
 import { useToast } from "./toast";
 import { IconButton, Kbd, Progress } from "./ui";
 
+/** A reminder in the top bar while private mode is on in Settings → Privacy. */
+function PrivateIndicator() {
+  const path = usePathname();
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    let stop = false;
+    api<{ privateMode: boolean }>("/api/agent").then((r) => { if (!stop) setOn(r.privateMode); }, () => undefined);
+    return () => { stop = true; };
+  }, [path]);
+  if (!on) return null;
+  return (
+    <Link prefetch={false} href="/settings?tab=privacy" title="Quick scrapes, AI extraction, category scrapes and agent chats are kept in memory only" className="mr-1 inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-surface px-3 text-xs font-medium text-muted hover:text-text">
+      <EyeOff className="size-3.5" aria-hidden /><span className="hidden sm:inline">Private mode</span><span className="sr-only sm:hidden">Private mode is on</span>
+    </Link>
+  );
+}
+
 function Logo({ compact }: { compact?: boolean }) {
   return (
-    <Link href="/" className="flex items-center gap-2.5 px-2 font-semibold tracking-tight" aria-label="Scaper home">
+    <Link prefetch={false} href="/" className="flex items-center gap-2.5 px-2 font-semibold tracking-tight" aria-label="Scaper home">
       <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg">
         <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
           <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /><path d="M8 11h6M11 8v6" />
@@ -96,7 +113,7 @@ function JobsIndicator() {
                 <li key={j.id} className="space-y-1.5 px-4 py-2.5">
                   <div className="flex items-center gap-2">
                     <span className="rounded bg-surface-2 px-1.5 text-[11px] font-medium text-muted">{KIND_LABEL[j.kind] ?? j.kind}</span>
-                    <Link href={`/runs/${j.id}`} onClick={close} className="min-w-0 flex-1 truncate text-sm hover:text-accent">{j.title}</Link>
+                    <Link prefetch={false} href={`/runs/${j.id}`} onClick={close} className="min-w-0 flex-1 truncate text-sm hover:text-accent">{j.title}</Link>
                     <IconButton
                       size="sm"
                       label="Cancel job"
@@ -113,7 +130,7 @@ function JobsIndicator() {
               );
             })}
           </ul>
-          <Link href="/runs" onClick={close} className="block border-t border-border px-4 py-2.5 text-center text-sm font-medium text-accent hover:bg-surface-2">Open Runs</Link>
+          <Link prefetch={false} href="/runs" onClick={close} className="block border-t border-border px-4 py-2.5 text-center text-sm font-medium text-accent hover:bg-surface-2">Open Runs</Link>
         </div>
       )}
     </Popover>
@@ -172,7 +189,7 @@ function AlertsPopover() {
             {items?.length === 0 && <li className="px-4 py-6 text-center text-sm text-muted">No alerts yet.</li>}
             {items?.map((n) => (
               <li key={n.id}>
-                <Link
+                <Link prefetch={false}
                   href={n.watcher_id ? `/watchers/${n.watcher_id}` : "/notifications"}
                   onClick={close}
                   className="flex gap-3 px-4 py-2.5 hover:bg-surface-2"
@@ -187,7 +204,7 @@ function AlertsPopover() {
               </li>
             ))}
           </ul>
-          <Link href="/notifications" onClick={close} className="block border-t border-border px-4 py-2.5 text-center text-sm font-medium text-accent hover:bg-surface-2">All alerts</Link>
+          <Link prefetch={false} href="/notifications" onClick={close} className="block border-t border-border px-4 py-2.5 text-center text-sm font-medium text-accent hover:bg-surface-2">All alerts</Link>
         </div>
       )}
     </Popover>
@@ -210,6 +227,7 @@ function SideNav({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   onClick={onNavigate}
                   title={collapsed ? item.label : undefined}
                   aria-current={on ? "page" : undefined}
@@ -310,6 +328,7 @@ function ShellInner({ children, passwordProtected }: { children: ReactNode; pass
             <span className="ml-auto hidden items-center gap-1 sm:flex"><Kbd>Ctrl</Kbd><Kbd>K</Kbd></span>
           </button>
           <div className="ml-auto flex items-center gap-1">
+            <PrivateIndicator />
             <JobsIndicator />
             <AlertsPopover />
           </div>

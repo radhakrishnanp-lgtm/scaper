@@ -19,16 +19,16 @@ function NewTask() {
   if (!templateId && !url) {
     return (
       <>
-        <PageHeader title="New task" description="Start from a template or a blank task. Everything stays editable." actions={<Link href="/tasks"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Tasks</Button></Link>} />
+        <PageHeader title="New task" description="Start from a template or a blank task. Everything stays editable." actions={<Link prefetch={false} href="/tasks"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Tasks</Button></Link>} />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Link href="/tasks/new?template=blank" className="group">
+          <Link prefetch={false} href="/tasks/new?template=blank" className="group">
             <Card className="h-full p-5 transition-colors group-hover:border-accent">
               <p className="flex items-center gap-2 font-medium"><FilePlus2 className="size-4 text-accent" />Blank task</p>
               <p className="mt-1 text-sm text-muted">One URL and Auto extraction. Add pages, fields and alerts as you go.</p>
             </Card>
           </Link>
           {TEMPLATES.map((t) => (
-            <Link key={t.id} href={`/tasks/new?template=${t.id}`} className="group">
+            <Link prefetch={false} key={t.id} href={`/tasks/new?template=${t.id}`} className="group">
               <Card className="h-full p-5 transition-colors group-hover:border-accent">
                 <p className="flex items-center gap-2 font-medium">{t.icon}{t.title}</p>
                 <p className="mt-1 text-sm text-muted">{t.description}</p>
@@ -36,7 +36,7 @@ function NewTask() {
             </Link>
           ))}
         </div>
-        <p className="mt-6 text-sm text-muted">Just want data from one page right now? Use <Link href="/scrape" className="font-medium text-accent hover:underline">Quick scrape</Link> and save it as a task later.</p>
+        <p className="mt-6 text-sm text-muted">Just want data from one page right now? Use <Link prefetch={false} href="/scrape" className="font-medium text-accent hover:underline">Quick scrape</Link> and save it as a task later.</p>
       </>
     );
   }
@@ -56,7 +56,7 @@ function NewTask() {
   return (
     <>
       <PageHeader title={template ? `New task: ${template.title}` : "New task"} description={template?.description ?? "Set the start page and what to extract. Test it, then save."}
-        actions={<Link href="/tasks/new"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Templates</Button></Link>} />
+        actions={<Link prefetch={false} href="/tasks/new"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Templates</Button></Link>} />
       <TaskEditor key={templateId ?? url} initial={initial} />
     </>
   );

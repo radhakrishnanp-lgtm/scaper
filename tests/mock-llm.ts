@@ -16,6 +16,12 @@ export function startMockLlm(script: (messages: Msg[], body: Record<string, unkn
       const body = JSON.parse(raw) as Record<string, unknown>;
       requests.push({ ...body, auth: req.headers.authorization });
       const message = script(body.messages as Msg[], body);
+      // `__status` makes the reply an HTTP error, for retry, fallback and parameter tests.
+      if (typeof message.__status === "number") {
+        res.writeHead(message.__status, { "content-type": "application/json", "retry-after": "0.01" });
+        res.end(JSON.stringify({ error: { message: String(message.error ?? "failed") } }));
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ id: "x", choices: [{ index: 0, message: { role: "assistant", ...message }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 20 } }));
     });

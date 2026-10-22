@@ -24,7 +24,7 @@ export const POST = handler(async (req) => {
     }
     return { ok: true, message: SENT[channel] };
   }
-  const started = Date.now();
-  const res = await chat([{ role: "user", content: "Reply with the single word: ready" }], { model: channel === "ai_fast" ? "fast" : "main", maxTokens: 10, temperature: 0 });
-  return { ok: true, message: `${res.model} answered "${res.content.trim().slice(0, 40)}" in ${((Date.now() - started) / 1000).toFixed(1)}s.` };
+  const res = await chat([{ role: "user", content: "Reply with the single word: ready" }], { model: channel === "ai_fast" ? "fast" : "main", maxTokens: 16, temperature: 0, purpose: "test" });
+  const via = res.fallbackFrom ? ` (the main choice failed, so the fallback answered)` : "";
+  return { ok: true, message: `${res.providerName} · ${res.model} answered "${res.content.trim().slice(0, 40)}" in ${(res.latencyMs / 1000).toFixed(1)}s${via}.` };
 });

@@ -9,6 +9,7 @@ import { listBackups } from "./ops/backup";
 import { failStaleAgentRuns } from "./repo/agent";
 import { claimDueDealSearches } from "./repo/deal-searches";
 import { audit, pruneEvents } from "./repo/events";
+import { clearAiCache, deleteAiCalls } from "./repo/ai";
 import { jobCounts, pruneJobs } from "./repo/jobs";
 import { pruneNotifications } from "./repo/notifications";
 import { claimDueProducts } from "./repo/products";
@@ -45,11 +46,13 @@ async function cleanOrphanMedia() {
 async function maintenance() {
   state.lastMaintenance = Date.now();
   const d = getSettings().data;
+  const ai = getSettings().ai;
   const snaps = pruneSnapshots(d.keepSnapshots);
   await deleteMedia(snaps.media);
   const removed = {
     events: pruneEvents(d.keepEventsDays), notifications: pruneNotifications(90), runs: pruneRuns(d.keepRuns),
     snapshots: snaps.removed, jobs: pruneJobs(d.keepJobsDays), hostStats: pruneHostStats(90), orphanMedia: await cleanOrphanMedia(),
+    aiCalls: deleteAiCalls(ai.keepCallsDays), aiCache: clearAiCache(Math.max(1, ai.cacheHours)),
   };
   db().pragma("wal_checkpoint(TRUNCATE)");
   log.info("maintenance.done", removed);

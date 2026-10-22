@@ -104,7 +104,7 @@ function ProductDetail({ id }: { id: string }) {
   return (
     <>
       <div className="mb-4 flex items-center justify-between">
-        <Link href="/deals" className="inline-flex items-center gap-1 text-sm text-muted hover:text-text"><ArrowLeft className="size-4" />Prices & deals</Link>
+        <Link prefetch={false} href="/deals" className="inline-flex items-center gap-1 text-sm text-muted hover:text-text"><ArrowLeft className="size-4" />Prices & deals</Link>
         <div className="flex gap-2">
           <Button icon={<RefreshCw className="size-4" />} loading={busy === "refresh"} onClick={refresh}>Check now</Button>
           <Menu label="Product actions" trigger={(t) => <IconButton {...t} label="More actions"><MoreHorizontal className="size-4" /></IconButton>} items={[
@@ -175,7 +175,7 @@ function ProductDetail({ id }: { id: string }) {
                 <ul className="divide-y divide-border">
                   {data.siblings.map((x) => (
                     <li key={x.id}>
-                      <Link href={`/deals/${x.id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-surface-2/40">
+                      <Link prefetch={false} href={`/deals/${x.id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-surface-2/40">
                         <span className="min-w-0 flex-1 truncate text-sm">{hostOf(x.url)} · {x.title}</span>
                         <span className="font-semibold tabular-nums">{money(x.current_price, x.currency)}</span>
                         <VerdictBadge stats={x.stats} />

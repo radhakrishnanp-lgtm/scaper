@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Crosshair, Eye, Plus, Sparkles, Trash2, Wand2, X } from "lucide-react";
-import type { BrowserStep, Field, FetchMode, Transform } from "@/lib/schemas";
+import { AI_FIELD_TYPES, type AiField, type BrowserStep, type Field, type FetchMode, type Transform } from "@/lib/schemas";
 import type { Cell } from "@/lib/types";
 import { api, errorText } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
@@ -15,7 +15,7 @@ import { plural } from "@/lib/format";
 export type ExtractValue =
   | { type: "auto" }
   | { type: "selectors"; itemSelector: string; fields: Field[] }
-  | { type: "ai"; instruction: string; useFastModel: boolean };
+  | { type: "ai"; instruction: string; useFastModel: boolean; fields?: AiField[]; scope?: "list" | "single"; input?: "main" | "full" };
 
 export const newField = (name = "field", selector = "", attr = "text"): Field => ({ name, selector, attr, multiple: false, transforms: [], required: false });
 
@@ -228,7 +228,7 @@ export function ExtractEditor({ value, onChange, url, mode, steps = [] }: {
       <Segmented
         label="Extraction method"
         value={value.type}
-        onChange={(t) => onChange(t === "auto" ? { type: "auto" } : t === "ai" ? { type: "ai", instruction: value.type === "ai" ? value.instruction : "", useFastModel: true } : { type: "selectors", itemSelector: sel?.itemSelector ?? "", fields: sel?.fields.length ? sel.fields : [newField("title")] })}
+        onChange={(t) => onChange(t === "auto" ? { type: "auto" } : t === "ai" ? (value.type === "ai" ? value : { type: "ai", instruction: "", useFastModel: true, fields: [], scope: "list", input: "main" }) : { type: "selectors", itemSelector: sel?.itemSelector ?? "", fields: sel?.fields.length ? sel.fields : [newField("title")] })}
         options={[{ value: "auto", label: "Auto" }, { value: "selectors", label: "Selectors" }, { value: "ai", label: "AI" }]}
       />
 
@@ -236,14 +236,7 @@ export function ExtractEditor({ value, onChange, url, mode, steps = [] }: {
         <p className="text-sm text-muted">Scaper finds repeated items (product cards, results, posts), structured product data, tables, headings, links and images on its own. Good for a first look; switch to Selectors for exact columns.</p>
       )}
 
-      {value.type === "ai" && (
-        <div className="space-y-3">
-          <FormField label="What should the AI extract?" hint="Plain language. The model only reads the page text; it never runs code or follows instructions found on the page.">
-            {(p) => <Textarea {...p} value={value.instruction} onChange={(e) => onChange({ ...value, instruction: e.target.value })} placeholder="Every product with name, price, rating and link" />}
-          </FormField>
-          <Switch label="Use the fast model" description="Cheaper and quicker; switch off for complex pages." checked={value.useFastModel} onChange={(v) => onChange({ ...value, useFastModel: v })} />
-        </div>
-      )}
+      {value.type === "ai" && <AiExtractFields value={value} onChange={onChange} url={url} mode={mode} validUrl={validUrl} />}
 
       {sel && (
         <div className="space-y-4">
@@ -321,6 +314,68 @@ export function ExtractEditor({ value, onChange, url, mode, steps = [] }: {
           )}
         </div>
       </Dialog>
+    </div>
+  );
+}
+
+const AI_TYPE_LABEL: Record<AiField["type"], string> = { text: "Text", number: "Number", url: "Link", image: "Image", boolean: "Yes / no", date: "Date", list: "List" };
+
+/** AI mode: plain-language instruction plus typed columns. Your model reads the page as text; answers are checked against it. */
+function AiExtractFields({ value, onChange, url, mode, validUrl }: {
+  value: Extract<ExtractValue, { type: "ai" }>; onChange: (v: ExtractValue) => void; url: string; mode: FetchMode; validUrl: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fields = value.fields ?? [];
+  const set = (patch: Partial<Extract<ExtractValue, { type: "ai" }>>) => onChange({ ...value, ...patch });
+  const setField = (i: number, patch: Partial<AiField>) => set({ fields: fields.map((f, k) => (k === i ? { ...f, ...patch } : f)) });
+  const suggest = async () => {
+    setBusy(true); setError(null);
+    try {
+      const r = await api<{ scope: "list" | "single"; instruction: string; fields: AiField[] }>("/api/ai/fields", { body: { url, describe: value.instruction, mode, useFastModel: value.useFastModel } });
+      set({ fields: r.fields, scope: r.scope, instruction: value.instruction.trim() ? value.instruction : r.instruction });
+    } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-4">
+      <FormField label="What should the AI extract?" hint="Plain language. The model only reads the page text; it never runs code or follows instructions found on the page.">
+        {(p) => <Textarea {...p} value={value.instruction} onChange={(e) => set({ instruction: e.target.value })} placeholder="Every product with name, price, rating and link" />}
+      </FormField>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <p className="mb-1.5 text-sm font-medium">The page has</p>
+          <Segmented label="Rows" value={value.scope ?? "list"} onChange={(v) => set({ scope: v })} options={[{ value: "list", label: "Many items (one row each)" }, { value: "single", label: "One item (one row)" }]} />
+        </div>
+        <div>
+          <p className="mb-1.5 text-sm font-medium">Read</p>
+          <Segmented label="Page part" value={value.input ?? "main"} onChange={(v) => set({ input: v })} options={[{ value: "main", label: "Main content" }, { value: "full", label: "Whole page" }]} />
+        </div>
+      </div>
+      <div className="rounded-xl border border-border">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+          <div>
+            <p className="text-sm font-medium">Columns</p>
+            <p className="text-xs text-muted">Optional. With columns, every row has the same shape and values are converted to their type. Without, the AI chooses.</p>
+          </div>
+          <Button size="sm" variant="secondary" icon={<Sparkles className="size-4" />} loading={busy} disabled={!validUrl} onClick={suggest}>Suggest columns</Button>
+        </div>
+        <div className="space-y-2 p-4">
+          {error && <Callout tone="danger" title="Could not suggest columns">{error}</Callout>}
+          {fields.map((f, i) => (
+            <div key={i} className="grid gap-2 sm:grid-cols-[minmax(0,160px)_120px_minmax(0,1fr)_auto]">
+              <Input aria-label="Column name" value={f.name} onChange={(e) => setField(i, { name: e.target.value })} placeholder="price" />
+              <Select aria-label={`Type of ${f.name}`} value={f.type} onChange={(e) => setField(i, { type: e.target.value as AiField["type"] })}>
+                {AI_FIELD_TYPES.map((t) => <option key={t} value={t}>{AI_TYPE_LABEL[t]}</option>)}
+              </Select>
+              <Input aria-label={`What ${f.name} holds`} value={f.description} onChange={(e) => setField(i, { description: e.target.value })} placeholder="What it holds, e.g. price after discount, number only" />
+              <IconButton label={`Remove ${f.name}`} onClick={() => set({ fields: fields.filter((_, k) => k !== i) })}><Trash2 className="size-4" /></IconButton>
+            </div>
+          ))}
+          <Button size="sm" variant="ghost" icon={<Plus className="size-4" />} disabled={fields.length >= 30} onClick={() => set({ fields: [...fields, { name: `field${fields.length + 1}`, type: "text", description: "" }] })}>Add column</Button>
+          {!validUrl && <p className="text-xs text-muted">Enter the page URL first to suggest columns.</p>}
+        </div>
+      </div>
+      <Switch label="Use the fast model" description="Cheaper and quicker; switch off for complex pages." checked={value.useFastModel} onChange={(v) => set({ useFastModel: v })} />
     </div>
   );
 }

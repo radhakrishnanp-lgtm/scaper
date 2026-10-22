@@ -1,6 +1,8 @@
 import "server-only";
 import { Cron } from "croner";
 import { db } from "../db";
+import { isPrivate } from "../privacy";
+import { ephemeral } from "./ephemeral";
 import { defaultTaskOptions, taskOptionsSchema, type ExtractSpec, type FetchMode, type TaskInput, type TaskOptions } from "@/lib/schemas";
 import { newId, now, pageSize, parseJson } from "./util";
 
@@ -140,7 +142,7 @@ type RunRow = {
   status: RunStatus; extract: string; result: string | null; row_count: number; page_count: number;
   error: string | null; duration_ms: number; created_at: string;
 };
-export type ScrapeRun = Omit<RunRow, "extract" | "result"> & { extract: ExtractSpec; result: ScrapeResult | null; recipe_name?: string | null };
+export type ScrapeRun = Omit<RunRow, "extract" | "result"> & { extract: ExtractSpec; result: ScrapeResult | null; recipe_name?: string | null; private?: boolean };
 
 const toRun = (r: RunRow): ScrapeRun => ({
   ...r,
@@ -148,8 +150,14 @@ const toRun = (r: RunRow): ScrapeRun => ({
   result: parseJson<ScrapeResult | null>(r.result, null),
 });
 
+// Private runs: kept in memory for an hour, never written to the database.
+const privateRuns = ephemeral<ScrapeRun>("runs", 60 * 60_000, 50);
+
 export function saveRun(input: Omit<ScrapeRun, "id" | "created_at" | "job_id" | "page_count"> & { job_id?: string | null; page_count?: number }): ScrapeRun {
   const id = newId();
+  if (isPrivate()) {
+    return privateRuns.set(id, { ...input, id, job_id: input.job_id ?? null, page_count: input.page_count ?? 1, created_at: now(), private: true });
+  }
   db().prepare(
     `INSERT INTO scrape_runs (id, recipe_id, job_id, url, final_url, mode, status, extract, result, row_count, page_count, error, duration_ms, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -161,6 +169,8 @@ export function saveRun(input: Omit<ScrapeRun, "id" | "created_at" | "job_id" | 
 }
 
 export function getRun(id: string): ScrapeRun | null {
+  const p = privateRuns.get(id);
+  if (p) return p;
   const r = db().prepare("SELECT * FROM scrape_runs WHERE id = ?").get(id) as RunRow | undefined;
   return r ? toRun(r) : null;
 }
@@ -196,10 +206,12 @@ export function runTrend(recipeId: string, limit = 30) {
 }
 
 export function deleteRun(id: string) {
+  if (privateRuns.delete(id)) return true;
   return db().prepare("DELETE FROM scrape_runs WHERE id = ?").run(id).changes > 0;
 }
 
 export function deleteRuns(ids: string[]) {
+  ids = ids.filter((id) => !privateRuns.delete(id));
   const stmt = db().prepare("DELETE FROM scrape_runs WHERE id = ?");
   return db().transaction(() => ids.reduce((n, id) => n + stmt.run(id).changes, 0))();
 }

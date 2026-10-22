@@ -317,6 +317,38 @@ export async function browserGet(url: string, opts: BrowserOptions): Promise<Bro
   }
 }
 
+/**
+ * A browser context that stays open across several steps (the agent's browser). It takes one of the
+ * browser slots until closed, blocks private-network requests like every other page, and skips heavy files.
+ * Site headers are only sent to their own site.
+ */
+export async function openSessionContext(opts: {
+  userAgent: string; proxyUrl: string; allowPrivate: boolean; blockHeavy: boolean; maxConcurrency: number;
+  headersFor: (host: string) => Record<string, string> | null;
+}) {
+  await acquire(opts.maxConcurrency);
+  let released = false;
+  const done = () => { if (!released) { released = true; release(); } };
+  try {
+    const browser = await getBrowser(opts.proxyUrl);
+    const context = await browser.newContext({ userAgent: opts.userAgent || undefined, viewport: { width: 1366, height: 900 }, locale: "en-IN", acceptDownloads: false });
+    await context.route("**/*", (route) => {
+      const req = route.request();
+      let host = "";
+      try { host = new URL(req.url()).hostname.replace(/^\[|\]$/g, ""); } catch { /* data: and blob: URLs */ }
+      if (!opts.allowPrivate && host && (host === "localhost" || isPrivateAddress(host))) return route.abort("blockedbyclient");
+      if (opts.blockHeavy && HEAVY.has(req.resourceType())) return route.abort("blockedbyclient");
+      const extra = host ? opts.headersFor(host) : null;
+      if (extra && Object.keys(extra).length) return route.continue({ headers: { ...req.headers(), ...extra } });
+      return route.continue();
+    });
+    return { context, close: async () => { await context.close().catch(() => undefined); done(); } };
+  } catch (e) {
+    done();
+    throw e;
+  }
+}
+
 export async function closeBrowser() {
   await pool.browser?.close().catch(() => undefined);
   pool.browser = null;

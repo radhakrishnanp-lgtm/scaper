@@ -123,7 +123,7 @@ function AlertsPage() {
           {perm === "default" && <Button variant="secondary" icon={<Bell className="size-4" />} onClick={() => void Notification.requestPermission().then(setPerm)}>Enable desktop alerts</Button>}
           <Button variant="secondary" icon={<CheckCheck className="size-4" />} disabled={!data?.unread} onClick={() => void post({ action: "read", ids: "all" }, "All marked as read")}>Mark all read</Button>
           <Button variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => setConfirm("read")}>Delete read</Button>
-          <Link href="/settings?tab=alerts"><Button variant="ghost" icon={<Settings className="size-4" />}>Channels</Button></Link>
+          <Link prefetch={false} href="/settings?tab=alerts"><Button variant="ghost" icon={<Settings className="size-4" />}>Channels</Button></Link>
         </>}
       />
 
@@ -173,7 +173,7 @@ function AlertsPage() {
                       </div>
                       <Body text={n.body} />
                       <div className="mt-1.5 flex flex-wrap gap-3 text-xs">
-                        {src && <Link href={src} className="font-medium text-accent hover:underline">{n.watcher_id ? "See the change" : "Price history"}</Link>}
+                        {src && <Link prefetch={false} href={src} className="font-medium text-accent hover:underline">{n.watcher_id ? "See the change" : "Price history"}</Link>}
                         {n.url && <a href={n.url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-muted hover:text-text">Open page<ExternalLink className="size-3" /></a>}
                       </div>
                     </div>

@@ -117,7 +117,7 @@ async function askAi(question: string, summary: string, after: string) {
       { role: "system", content: `You decide whether a website change matters to the user. Reply with JSON {"match": true|false, "reason": "one short sentence"}. ${UNTRUSTED_NOTE}` },
       { role: "user", content: `The user wants to know: ${question}\n<page>\nCHANGE:\n${summary}\n\nCURRENT CONTENT (start):\n${after.slice(0, 6000)}\n</page>` },
     ],
-    { model: "fast", json: true, temperature: 0, maxTokens: 200 },
+    { model: "fast", json: true, temperature: 0, maxTokens: 200, purpose: "watcher" },
   );
   return aiVerdictSchema.parse(parseJsonReply(res.content));
 }
@@ -128,7 +128,7 @@ async function aiSummary(summary: string) {
       { role: "system", content: `Summarize a website change for a notification in one plain sentence of at most 25 words. ${UNTRUSTED_NOTE}` },
       { role: "user", content: `<page>${summary.slice(0, 4000)}</page>` },
     ],
-    { model: "fast", temperature: 0, maxTokens: 80 },
+    { model: "fast", temperature: 0, maxTokens: 80, purpose: "watcher" },
   );
   return res.content.trim().split("\n")[0]!.slice(0, 300);
 }

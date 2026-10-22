@@ -385,7 +385,7 @@ export function WatcherEditor({ id, initial }: { id?: string; initial: WatcherDr
             {useSample && <Textarea aria-label="Sample text" rows={4} className="font-mono text-xs" value={sample} onChange={(e) => setSample(e.target.value)} placeholder="Paste text to check your rules against" />}
             <p className="text-xs text-muted">Testing reads the page once and saves nothing. <Kbd>Ctrl</Kbd> <Kbd>S</Kbd> saves.</p>
             {dirty && <p className="text-xs font-medium text-warning">Unsaved changes</p>}
-            {id && <Link href={`/watchers/${id}`} className="text-center text-sm text-muted hover:text-text">Cancel</Link>}
+            {id && <Link prefetch={false} href={`/watchers/${id}`} className="text-center text-sm text-muted hover:text-text">Cancel</Link>}
           </div>
         </Card>
 

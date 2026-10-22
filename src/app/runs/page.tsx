@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Activity, Ban, Eraser, RotateCcw } from "lucide-react";
+import { Activity, Ban, Eraser, EyeOff, RotateCcw } from "lucide-react";
 import type { Job } from "@/server/repo/jobs";
 import { ConfirmDialog } from "@/components/dialog";
 import { JOB_KIND_LABEL, jobResultHref, JobStatusBadge } from "@/components/status";
@@ -125,12 +125,12 @@ function RunsPage() {
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <JobStatusBadge status={j.status} />
                     <Badge>{JOB_KIND_LABEL[j.kind] ?? j.kind}</Badge>
-                    <Link href={`/runs/${j.id}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:text-accent">{j.title}</Link>
+                    <Link prefetch={false} href={`/runs/${j.id}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:text-accent">{j.private && <Badge className="mr-1.5"><EyeOff className="size-3" />private</Badge>}{j.title}</Link>
                     <span className="text-xs text-muted">{j.trigger} · {timeAgo(j.created_at)}{j.duration_ms !== null && !active ? ` · ${duration(j.duration_ms)}` : ""}{j.attempts > 1 ? ` · attempt ${j.attempts}/${j.max_attempts}` : ""}</span>
                     <div className="flex gap-1">
                       {active && <IconButton size="sm" label="Cancel" disabled={busy === j.id + "cancel"} onClick={() => void act(j, "cancel")}><Ban className="size-4" /></IconButton>}
                       {(j.status === "failed" || j.status === "cancelled") && <IconButton size="sm" label="Run again" disabled={busy === j.id + "retry"} onClick={() => void act(j, "retry")}><RotateCcw className="size-4" /></IconButton>}
-                      {href && !active && <Link href={href}><Button size="sm" variant="ghost">Result</Button></Link>}
+                      {href && !active && <Link prefetch={false} href={href}><Button size="sm" variant="ghost">Result</Button></Link>}
                     </div>
                   </div>
                   {j.status === "running" && (

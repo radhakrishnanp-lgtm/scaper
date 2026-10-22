@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, Copy, Crosshair, FileUp, FlaskConical, Globe, Save, X, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Crosshair, FileUp, FlaskConical, Globe, Plus, Save, Trash2, X, Zap } from "lucide-react";
 import type { Task } from "@/server/repo/scrapes";
 import { compilePatterns, matchesAny, parseUrlList } from "@/server/tasks/urls";
 import { taskSchema, type FetchMode, type NotifyChannels, type TaskOptions } from "@/lib/schemas";
@@ -19,7 +19,7 @@ import { ScrapeResultView, type RunView } from "./scrape-result";
 import { StepsEditor } from "./steps-editor";
 import { describeTask } from "./task-bits";
 import { useToast } from "./toast";
-import { Badge, Button, Callout, Card, Checkbox, Field, Input, Kbd, Section, Segmented, Select, Switch, Tabs, TagInput, Textarea } from "./ui";
+import { Badge, Button, Callout, Card, Checkbox, Field, IconButton, Input, Kbd, Section, Segmented, Select, Switch, Tabs, TagInput, Textarea } from "./ui";
 
 export type TaskDraft = {
   name: string; description: string; url: string; mode: FetchMode; extract: ExtractValue; options: TaskOptions; tags: string[];
@@ -40,8 +40,8 @@ type TabId = "start" | "pages" | "extract" | "steps" | "data" | "alerts" | "sche
 
 /** Which tab holds the field a validation error points at. */
 function tabFor(path: string): TabId {
-  if (/^(extract|options\.detail)/.test(path)) return "extract";
-  if (/^options\.(startUrls|sitemap|inputs|pagination|crawl|limits)/.test(path)) return "pages";
+  if (/^(extract|options\.(detail|aiColumns|aiFallback))/.test(path)) return "extract";
+  if (/^options\.(startUrls|categories|sitemap|inputs|pagination|crawl|limits)/.test(path)) return "pages";
   if (/^options\.steps/.test(path)) return "steps";
   if (/^options\.(dedupeBy|quality|incremental|includeSourceUrl)/.test(path)) return "data";
   if (/^options\.(monitor|output)/.test(path)) return "alerts";
@@ -93,7 +93,7 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
   const url = fullUrlOf(d.url);
   const payload = useMemo(() => buildPayload(d), [d]);
   const dirty = JSON.stringify(payload) !== saved;
-  const fieldNames = d.extract.type === "selectors" ? d.extract.fields.map((f) => f.name).filter(Boolean) : [];
+  const fieldNames = d.extract.type === "selectors" ? d.extract.fields.map((f) => f.name).filter(Boolean) : d.extract.type === "ai" ? (d.extract.fields ?? []).map((f) => f.name) : [];
   const startUrls = useMemo(() => parseUrlList([d.startUrlsText]), [d.startUrlsText]);
   const csv = useMemo(() => csvInfo(o.inputs), [o.inputs]);
   const err = (path: string) => errors[path];
@@ -229,6 +229,18 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
 
           {tab === "pages" && (
             <>
+              <Section title="Categories" description="Each category is read with the next-page rules below, and every row gets a category column. A category scrape fills this in for you.">
+                {o.categories.map((c, i) => (
+                  <div key={i} className="flex gap-2">
+                    <Input aria-label="Category name" className="w-44" value={c.name} onChange={(e) => setOpt("categories", o.categories.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} placeholder="Laptops" />
+                    <Input aria-label="Category URL" className="min-w-0 flex-1 font-mono text-xs" value={c.url} onChange={(e) => setOpt("categories", o.categories.map((x, k) => (k === i ? { ...x, url: e.target.value } : x)))} placeholder="https://www.example.com/c/laptops" />
+                    <IconButton label={`Remove ${c.name || "category"}`} onClick={() => setOpt("categories", o.categories.filter((_, k) => k !== i))}><Trash2 className="size-4" /></IconButton>
+                  </div>
+                ))}
+                {err("options.categories") && <p className="text-xs text-danger">{err("options.categories")}</p>}
+                <Button size="sm" variant="secondary" icon={<Plus className="size-4" />} disabled={o.categories.length >= 500} onClick={() => setOpt("categories", [...o.categories, { name: "", url: "" }])}>Add category</Button>
+              </Section>
+
               <Section title="More start URLs" description={<>One per line. Ranges and lists expand: <code className="font-mono">/page/{"{1..20}"}</code>, <code className="font-mono">/{"{tv,phones}"}</code>. Lines starting with # are skipped.</>}>
                 <Field label="Start URLs" error={err("options.startUrls")}>
                   {(p) => <Textarea {...p} rows={4} className="font-mono text-xs" value={d.startUrlsText} onChange={(e) => set("startUrlsText", e.target.value)} placeholder={"https://www.example.com/category/laptops?page={2..10}\nhttps://www.example.com/category/{tablets,phones}"} />}
@@ -307,6 +319,30 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
                 {err("extract.fields") && <p className="text-sm text-danger">{err("extract.fields")}</p>}
                 {err("extract.instruction") && <p className="text-sm text-danger">{err("extract.instruction")}</p>}
                 <ExtractEditor value={d.extract} onChange={(v) => set("extract", v)} url={url.includes("{{") ? "" : url} mode={d.mode} steps={o.steps} />
+                {d.extract.type === "selectors" && (
+                  <Switch label="Let the AI read pages where the selectors find nothing" description="Uses your fast model with the same column names, only on pages that would otherwise give no rows." checked={o.aiFallback} onChange={(v) => setOpt("aiFallback", v)} />
+                )}
+              </Section>
+
+              <Section title="AI columns" description="Columns your AI fills in from each row after scraping: a category, a short summary, a yes/no check, a translation.">
+                {o.aiColumns.map((c, i) => (
+                  <div key={i} className="space-y-2 rounded-xl border border-border p-3">
+                    <div className="flex gap-2">
+                      <Input aria-label="Column name" className="w-44" value={c.name} onChange={(e) => setOpt("aiColumns", o.aiColumns.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} placeholder="segment" />
+                      <Input aria-label="What the AI fills in" className="min-w-0 flex-1" value={c.prompt} onChange={(e) => setOpt("aiColumns", o.aiColumns.map((x, k) => (k === i ? { ...x, prompt: e.target.value } : x)))} placeholder="budget, mid-range or premium, judged from price and title" />
+                      <IconButton label={`Remove ${c.name || "column"}`} onClick={() => setOpt("aiColumns", o.aiColumns.filter((_, k) => k !== i))}><Trash2 className="size-4" /></IconButton>
+                    </div>
+                    {err(`options.aiColumns.${i}.prompt`) && <p className="text-xs text-danger">{err(`options.aiColumns.${i}.prompt`)}</p>}
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="min-w-60 flex-1"><TagInput label="Reads columns" value={c.from} onChange={(v) => setOpt("aiColumns", o.aiColumns.map((x, k) => (k === i ? { ...x, from: v } : x)))} suggestions={fieldNames} placeholder="All columns" max={20} /></div>
+                      <Switch label="Fast model" checked={c.useFastModel} onChange={(v) => setOpt("aiColumns", o.aiColumns.map((x, k) => (k === i ? { ...x, useFastModel: v } : x)))} />
+                    </div>
+                  </div>
+                ))}
+                <div className="flex flex-wrap items-end gap-4">
+                  <Button size="sm" variant="secondary" icon={<Plus className="size-4" />} disabled={o.aiColumns.length >= 5} onClick={() => setOpt("aiColumns", [...o.aiColumns, { name: "", prompt: "", from: [], useFastModel: true }])}>Add AI column</Button>
+                  {o.aiColumns.length > 0 && <Field label="Fill at most this many rows per run">{(p) => <Input {...p} type="number" min={1} max={5000} className="w-32" value={o.aiColumnsMaxRows} onChange={(e) => setOpt("aiColumnsMaxRows", Number(e.target.value) || 1)} />}</Field>}
+                </div>
               </Section>
 
               <Section title="Detail pages" description="Open each row's link and read more fields from that page (list → detail)." actions={<Switch label="Open detail pages" checked={o.detail.enabled} onChange={(v) => setOpt("detail", { ...o.detail, enabled: v, fields: o.detail.fields.length ? o.detail.fields : [newField("description")] })} />}>
@@ -424,7 +460,7 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
             <Button variant="secondary" onClick={testRun} loading={testing} icon={<FlaskConical className="size-4" />}>{testing ? "Testing…" : "Test run"}</Button>
             <p className="text-xs text-muted">Test runs read up to 5 pages, save nothing to the task and send no alerts. <Kbd>Ctrl</Kbd> <Kbd>S</Kbd> saves.</p>
             {dirty && <p className="text-xs font-medium text-warning">Unsaved changes</p>}
-            {id && <Link href={`/tasks/${id}`} className="text-center text-sm text-muted hover:text-text">Cancel</Link>}
+            {id && <Link prefetch={false} href={`/tasks/${id}`} className="text-center text-sm text-muted hover:text-text">Cancel</Link>}
           </div>
         </Card>
       </aside>

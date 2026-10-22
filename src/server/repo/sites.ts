@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "../db";
+import { isPrivate } from "../privacy";
 import type { FetchMode, SiteRuleInput } from "@/lib/schemas";
 import { now, parseJson } from "./util";
 
@@ -68,6 +69,7 @@ const day = () => new Date().toISOString().slice(0, 10);
 
 /** Per-host, per-day request counters for the Sites page. */
 export function recordHostRequest(host: string, outcome: { ok: boolean; blocked: boolean; ms: number; bytes: number; status: number | null }) {
+  if (isPrivate()) return;
   db().prepare(
     `INSERT INTO host_stats (host, day, requests, ok, blocked, errors, total_ms, bytes, last_status, last_at)
      VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)

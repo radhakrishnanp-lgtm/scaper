@@ -336,6 +336,51 @@ ALTER TABLE agent_runs ADD COLUMN parent_id TEXT;
 CREATE INDEX idx_agent_parent ON agent_runs(parent_id);
 `,
   },
+  {
+    id: 5,
+    name: "ai_gateway",
+    sql: `
+CREATE TABLE ai_calls (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  ref_id TEXT,
+  provider_id TEXT,
+  provider_name TEXT,
+  model TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ok','error','cached')),
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  fallback_from TEXT,
+  error TEXT,
+  request TEXT,
+  response TEXT
+);
+CREATE INDEX idx_ai_calls_created ON ai_calls(created_at DESC);
+CREATE INDEX idx_ai_calls_ref ON ai_calls(ref_id);
+
+CREATE TABLE ai_cache (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE ai_memory (
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'you' CHECK (source IN ('you','agent')),
+  created_at TEXT NOT NULL
+);
+
+ALTER TABLE ai_usage ADD COLUMN cost REAL NOT NULL DEFAULT 0;
+ALTER TABLE agent_runs ADD COLUMN cost REAL NOT NULL DEFAULT 0;
+ALTER TABLE agent_runs ADD COLUMN pending TEXT;
+ALTER TABLE agent_runs ADD COLUMN model_label TEXT;
+`,
+  },
 ];
 
 function migrate(db: Database.Database) {
@@ -357,6 +402,8 @@ export function openDatabase(file: string) {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
+  // Deleted rows are overwritten, so "wipe history" and private runs leave nothing readable in the file.
+  db.pragma("secure_delete = ON");
   migrate(db);
   return db;
 }

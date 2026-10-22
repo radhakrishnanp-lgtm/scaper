@@ -84,10 +84,10 @@ function RunDetail({ id }: { id: string }) {
         title={job.title}
         description={<span className="inline-flex flex-wrap items-center gap-2"><JobStatusBadge status={job.status} /><Badge>{JOB_KIND_LABEL[job.kind] ?? job.kind}</Badge><span>started by {job.trigger} · {dateTime(job.created_at)}</span></span>}
         actions={<>
-          <Link href="/runs"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Runs</Button></Link>
+          <Link prefetch={false} href="/runs"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Runs</Button></Link>
           {active && <Button variant="secondary" icon={<Ban className="size-4" />} loading={busy} onClick={() => void act("cancel")}>Cancel</Button>}
           {(job.status === "failed" || job.status === "cancelled") && <Button variant="secondary" icon={<RotateCcw className="size-4" />} loading={busy} onClick={() => void act("retry")}>Run again</Button>}
-          {href && !active && <Link href={href}><Button icon={<ArrowRight className="size-4" />}>Open result</Button></Link>}
+          {href && !active && <Link prefetch={false} href={href}><Button icon={<ArrowRight className="size-4" />}>Open result</Button></Link>}
         </>}
       />
 
@@ -134,7 +134,7 @@ function RunDetail({ id }: { id: string }) {
               { label: "Took", value: duration(job.duration_ms) },
               { label: "Attempts", value: `${job.attempts} of ${job.max_attempts}` },
               { label: "Waits until", value: dateTime(job.run_after), hidden: job.status !== "queued" },
-              { label: "Source", value: source ? <Link href={source} className="text-accent hover:underline">Open</Link> : "—" },
+              { label: "Source", value: source ? <Link prefetch={false} href={source} className="text-accent hover:underline">Open</Link> : "—" },
             ]} />
           </Card>
           <Card>

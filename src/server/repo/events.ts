@@ -1,10 +1,13 @@
 import "server-only";
 import { db } from "../db";
 import { log } from "../log";
+import { isPrivate } from "../privacy";
 import { now, pageSize, parseJson } from "./util";
 
 /** Audit log for actions that change data or reach the outside world. Kept 30 days. */
 export function audit(event: string, data: Record<string, unknown> = {}, level: "info" | "warn" | "error" = "info") {
+  // Private work leaves no audit trail (the terminal still gets a line without details).
+  if (isPrivate()) { log[level](event, { private: true }); return; }
   log[level](event, data);
   db().prepare("INSERT INTO event_log (level, event, data, created_at) VALUES (?, ?, ?, ?)").run(level, event, JSON.stringify(data), now());
 }

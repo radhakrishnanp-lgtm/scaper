@@ -28,7 +28,7 @@ function DataCell({ data }: { data: Record<string, unknown> }) {
         return (
           <span key={k} className="min-w-0 break-all">
             <span className="text-muted">{k}=</span>
-            {href ? <Link href={href} className="text-accent hover:underline">{text.slice(0, 8)}</Link> : <span>{text.length > 160 ? `${text.slice(0, 160)}…` : text}</span>}
+            {href ? <Link prefetch={false} href={href} className="text-accent hover:underline">{text.slice(0, 8)}</Link> : <span>{text.length > 160 ? `${text.slice(0, 160)}…` : text}</span>}
           </span>
         );
       })}

@@ -30,6 +30,7 @@ function ScrapePage() {
   const [steps, setSteps] = useState<BrowserStep[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ type: "none" });
   const [screenshot, setScreenshot] = useState(false);
+  const [priv, setPriv] = useState(false);
   const [more, setMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -44,7 +45,7 @@ function ScrapePage() {
     setBusy(true); setErrors({});
     try {
       const res = await api<{ run: RunView | null; job: { status: string; error: string | null; id: string } }>("/api/scrape", {
-        body: { url: fullUrl, mode, extract: cleanExtract(), screenshot, options: steps.length || pagination.type !== "none" ? options() : undefined },
+        body: { url: fullUrl, mode, extract: cleanExtract(), screenshot, private: priv || undefined, options: steps.length || pagination.type !== "none" ? options() : undefined },
       });
       if (res.run) {
         setRun(res.run);
@@ -80,7 +81,7 @@ function ScrapePage() {
       <PageHeader
         title="Quick scrape"
         description="Pull data out of one page now. For many pages, schedules and alerts, save it as a task."
-        actions={<Link href="/tasks"><Button variant="secondary" icon={<ListChecks className="size-4" />}>Tasks</Button></Link>}
+        actions={<Link prefetch={false} href="/tasks"><Button variant="secondary" icon={<ListChecks className="size-4" />}>Tasks</Button></Link>}
       />
       <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-6">
@@ -106,7 +107,7 @@ function ScrapePage() {
 
               <div className="rounded-xl border border-border">
                 <button type="button" className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium" onClick={() => setMore(!more)} aria-expanded={more}>
-                  <span>More options <span className="font-normal text-muted">· page actions, next pages, screenshot</span></span>
+                  <span>More options <span className="font-normal text-muted">· page actions, next pages, screenshot, private</span></span>
                   <ChevronDown className={more ? "size-4 rotate-180 transition-transform" : "size-4 transition-transform"} />
                 </button>
                 {more && (
@@ -118,6 +119,7 @@ function ScrapePage() {
                     </div>
                     <PaginationField value={pagination} onChange={setPagination} mode={mode} />
                     <Switch checked={screenshot} onChange={setScreenshot} label="Take a screenshot" description="Browser mode only. Loads images, so it is a little slower." disabled={mode === "fast"} />
+                    <Switch checked={priv} onChange={setPriv} label="Private" description="Keep the result in memory for an hour only: nothing saved in Data, the AI log or site statistics." />
                   </div>
                 )}
               </div>
@@ -141,14 +143,14 @@ function ScrapePage() {
         </div>
 
         <Card className="h-fit">
-          <CardHeader title="Recent runs" actions={<Link href="/history" className="text-sm font-medium text-accent hover:underline">All data</Link>} />
+          <CardHeader title="Recent runs" actions={<Link prefetch={false} href="/history" className="text-sm font-medium text-accent hover:underline">All data</Link>} />
           {recent.loading ? <div className="p-5"><div className="skeleton h-20 rounded-lg" /></div> : !recent.data?.items.length ? (
             <div className="flex flex-col items-center px-5 py-8 text-center text-sm text-muted"><Clock className="mb-2 size-5" />Your scrapes appear here.</div>
           ) : (
             <ul className="divide-y divide-border">
               {recent.data.items.map((r) => (
                 <li key={r.id}>
-                  <Link href={`/history/${r.id}`} className="block px-4 py-3 hover:bg-surface-2/50">
+                  <Link prefetch={false} href={`/history/${r.id}`} className="block px-4 py-3 hover:bg-surface-2/50">
                     <p className="truncate text-sm font-medium">{hostOf(r.url)}</p>
                     <p className="mt-0.5 flex items-center gap-2 text-xs text-muted"><RunStatusBadge status={r.status} />{plural(r.row_count, "row")} · {timeAgo(r.created_at)}</p>
                   </Link>

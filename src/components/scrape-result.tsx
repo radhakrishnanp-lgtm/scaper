@@ -63,7 +63,7 @@ export function ScrapeResultView({ run, onUseSelectors, actions }: {
         </div>
         <div className="flex flex-wrap gap-2">
           {actions}
-          <Link href={watchHref}><Button size="sm" variant="secondary" icon={<Radar className="size-4" />}>Watch page</Button></Link>
+          <Link prefetch={false} href={watchHref}><Button size="sm" variant="secondary" icon={<Radar className="size-4" />}>Watch page</Button></Link>
         </div>
       </div>
 

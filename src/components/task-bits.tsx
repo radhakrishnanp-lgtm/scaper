@@ -53,7 +53,7 @@ export const TEMPLATES: Template[] = [
   {
     id: "ai", title: "Describe it, let AI extract", icon: <Bot className="size-4 text-accent" />,
     description: "Say what you want in plain words. Uses your own model; good for messy pages.",
-    extract: { type: "ai", instruction: "", useFastModel: true },
+    extract: { type: "ai", instruction: "", fields: [], scope: "list", input: "main", useFastModel: true },
   },
 ];
 

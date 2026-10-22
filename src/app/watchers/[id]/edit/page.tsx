@@ -15,7 +15,7 @@ function EditWatcher({ id }: { id: string }) {
   return (
     <>
       <PageHeader title={`Edit: ${data.watcher.name}`} description={data.watcher.url}
-        actions={<Link href={`/watchers/${id}`}><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Back to watcher</Button></Link>} />
+        actions={<Link prefetch={false} href={`/watchers/${id}`}><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Back to watcher</Button></Link>} />
       <WatcherEditor key={data.watcher.updated_at} id={id} initial={draftFromWatcher(data.watcher)} />
     </>
   );

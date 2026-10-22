@@ -65,7 +65,7 @@ export function ChannelPicker({ value, onChange }: { value: NotifyChannels; onCh
         })}
       </div>
       {configured && CHANNELS.some((c) => value[c.key] && !configured[c.key]) && (
-        <p className="text-xs text-warning">Some chosen channels are not set up. <Link href="/settings?tab=alerts" className="font-medium underline">Set them up in Settings</Link>; alerts still reach the inbox.</p>
+        <p className="text-xs text-warning">Some chosen channels are not set up. <Link prefetch={false} href="/settings?tab=alerts" className="font-medium underline">Set them up in Settings</Link>; alerts still reach the inbox.</p>
       )}
     </div>
   );

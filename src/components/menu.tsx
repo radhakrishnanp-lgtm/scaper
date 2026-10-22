@@ -69,7 +69,7 @@ export function Menu({ trigger, items, align = "end", label, className }: {
               if (it.download || it.external) {
                 return <a key={i} role="menuitem" tabIndex={-1} href={it.href} download={it.download || undefined} target={it.external ? "_blank" : undefined} rel={it.external ? "noreferrer noopener" : undefined} className={itemClass()} onClick={() => setOpen(false)}>{body}</a>;
               }
-              return <Link key={i} role="menuitem" tabIndex={-1} href={it.href} className={itemClass()} onClick={() => setOpen(false)}>{body}</Link>;
+              return <Link prefetch={false} key={i} role="menuitem" tabIndex={-1} href={it.href} className={itemClass()} onClick={() => setOpen(false)}>{body}</Link>;
             }
             return (
               <button

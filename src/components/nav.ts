@@ -1,5 +1,5 @@
 import {
-  Activity, Bell, Bot, Database, Globe, LayoutDashboard, ListChecks, Radar, ScanSearch, ScrollText, Settings, Tag,
+  Activity, Bell, Bot, BrainCircuit, Database, FolderTree, Globe, LayoutDashboard, ListChecks, Radar, ScanSearch, ScrollText, Settings, Tag,
   type LucideIcon,
 } from "lucide-react";
 
@@ -16,6 +16,7 @@ export const NAV: NavGroup[] = [
     label: "Collect",
     items: [
       { href: "/scrape", label: "Quick scrape", icon: ScanSearch, keywords: "scrape extract page url selectors" },
+      { href: "/crawl", label: "Category scrape", icon: FolderTree, keywords: "categories crawl whole site ai plan listing pages" },
       { href: "/tasks", label: "Tasks", icon: ListChecks, keywords: "recipes saved scrapers crawl pagination schedule" },
       { href: "/runs", label: "Runs", icon: Activity, keywords: "jobs queue running logs" },
       { href: "/history", label: "Data", icon: Database, keywords: "history results datasets export csv excel" },
@@ -31,7 +32,10 @@ export const NAV: NavGroup[] = [
   },
   {
     label: "Assist",
-    items: [{ href: "/agent", label: "AI agent", icon: Bot, keywords: "ai chat assistant llm" }],
+    items: [
+      { href: "/agent", label: "AI agent", icon: Bot, keywords: "ai chat assistant llm" },
+      { href: "/ai-log", label: "AI log", icon: BrainCircuit, keywords: "llm calls tokens cost prompts usage" },
+    ],
   },
   {
     label: "System",

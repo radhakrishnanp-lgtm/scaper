@@ -93,7 +93,7 @@ export async function suggestSelectors(html: string, url: string, describe: stri
   ];
   let best: Suggestion | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const res = await chat(messages, { model, json: true, temperature: 0 });
+    const res = await chat(messages, { model, json: true, temperature: 0, purpose: "selectors", cache: attempt === 1 });
     const parsed = replySchema.safeParse(parseJsonReply(res.content));
     if (!parsed.success) {
       if (attempt === 2) break;

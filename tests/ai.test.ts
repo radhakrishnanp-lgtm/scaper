@@ -6,7 +6,7 @@ process.env.SCAPER_SCHEDULER = "off";
 const { openDatabase, setDatabaseForTests } = await import("@/server/db");
 setDatabaseForTests(openDatabase(":memory:"));
 const { saveSettings } = await import("@/server/repo/settings");
-const { startAgent, stopAgent } = await import("@/server/ai/agent");
+const { answerApproval, startAgent, stopAgent } = await import("@/server/ai/agent");
 const { agentThread, deleteAgentRun, getAgentRun } = await import("@/server/repo/agent");
 const { runScrape } = await import("@/server/scrape");
 const { chat } = await import("@/server/ai/client");
@@ -53,6 +53,8 @@ beforeAll(async () => {
 });
 afterAll(async () => { await site.close(); await llm.close(); });
 
+const ask = (prompt: string, fast: boolean, followUpOf?: string) => startAgent({ prompt, model: fast ? "fast" : "main", followUpOf });
+
 async function waitFor(id: string) {
   for (let i = 0; i < 100; i++) {
     const r = getAgentRun(id)!;
@@ -64,7 +66,7 @@ async function waitFor(id: string) {
 
 describe("AI agent", () => {
   it("calls tools on real pages and answers from their data", async () => {
-    const run = await waitFor(startAgent("Which headphone on the listing is cheapest?", false).id);
+    const run = await waitFor(ask("Which headphone on the listing is cheapest?", false).id);
     expect(run.status).toBe("done");
     expect(run.steps.some((s) => s.type === "tool" && s.name === "extract_items" && s.ok)).toBe(true);
     expect(run.answer).toContain("Echo Kids Headset");
@@ -73,18 +75,42 @@ describe("AI agent", () => {
     expect(Array.isArray(llm.requests[0]?.tools)).toBe(true);
   }, 30_000);
 
-  it("creates a watcher when asked", async () => {
-    const run = await waitFor(startAgent("Please watch the listing page", true).id);
+  it("asks before creating a watcher and does nothing when declined", async () => {
+    const started = ask("Please watch the listing page", true);
+    let pending = null;
+    for (let i = 0; i < 50 && !pending; i++) { await new Promise((r) => setTimeout(r, 100)); pending = getAgentRun(started.id)!.pending; }
+    expect(pending).toMatchObject({ tool: "create_watcher" });
+    expect(pending!.summary).toContain("every 30 min");
+    expect(answerApproval(started.id, "deny")).toBe(true);
+    const run = await waitFor(started.id);
+    expect(run.status).toBe("done");
+    expect(run.steps.find((s) => s.type === "tool")).toMatchObject({ name: "create_watcher", approval: "declined", ok: false });
+    expect(listWatchers().some((x) => x.name === "Listing")).toBe(false);
+  }, 30_000);
+
+  it("creates a watcher once allowed", async () => {
+    const started = ask("Please watch the listing page", true);
+    for (let i = 0; i < 50 && !getAgentRun(started.id)!.pending; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(answerApproval(started.id, "allow")).toBe(true);
+    const run = await waitFor(started.id);
     expect(run.status).toBe("done");
     expect(run.model).toBe("tiny-model");
+    expect(run.pending).toBeNull();
     const w = listWatchers().find((x) => x.name === "Listing");
     expect(w).toMatchObject({ interval_minutes: 30, condition: { type: "contains", text: "In stock" } });
   }, 30_000);
 
+  it("goes ahead without asking in auto mode", async () => {
+    saveSettings({ ai: { agentApproval: "auto" } });
+    const run = await waitFor(ask("Please watch the listing page", true).id);
+    saveSettings({ ai: { agentApproval: "ask" } });
+    expect(run.steps.find((s) => s.type === "tool")).toMatchObject({ name: "create_watcher", approval: "auto", ok: true });
+  }, 30_000);
+
   it("answers follow-ups with the earlier question and answer as context", async () => {
-    const first = await waitFor(startAgent("Which headphone on the listing is cheapest?", true).id);
+    const first = await waitFor(ask("Which headphone on the listing is cheapest?", true).id);
     const before = llm.requests.length;
-    const next = await waitFor(startAgent("Is that a good price?", true, first.id).id);
+    const next = await waitFor(ask("Is that a good price?", true, first.id).id);
     expect(next.status).toBe("done");
     expect(next.parent_id).toBe(first.id);
     expect(agentThread(next.id).map((r) => r.id)).toEqual([first.id]);
@@ -93,13 +119,13 @@ describe("AI agent", () => {
     expect(sent[2]!.content).toContain("Echo Kids Headset");
     expect(sent[3]!.content).toBe("Is that a good price?");
     // Deleting the middle of a conversation keeps the later turns attached to the earlier ones.
-    const third = await waitFor(startAgent("Thanks", true, next.id).id);
+    const third = await waitFor(ask("Thanks", true, next.id).id);
     deleteAgentRun(next.id);
     expect(getAgentRun(third.id)!.parent_id).toBe(first.id);
   }, 30_000);
 
   it("stops when asked and never flips back to done", async () => {
-    const run = startAgent("Which headphone on the listing is cheapest?", true);
+    const run = ask("Which headphone on the listing is cheapest?", true);
     expect(stopAgent(run.id)).toBe(true);
     expect(getAgentRun(run.id)).toMatchObject({ status: "error", error: "Stopped by you." });
     await new Promise((r) => setTimeout(r, 2500));
@@ -111,7 +137,7 @@ describe("AI agent", () => {
 
 describe("AI extraction", () => {
   it("returns validated rows from the model", async () => {
-    const run = await runScrape({ url: `${site.base}/listing`, mode: "fast", extract: { type: "ai", instruction: "products and prices", useFastModel: true } });
+    const run = await runScrape({ url: `${site.base}/listing`, mode: "fast", extract: { type: "ai", instruction: "products and prices", fields: [], scope: "list", input: "main", useFastModel: true } });
     expect(run.status).toBe("ok");
     expect(run.result?.datasets[0]).toMatchObject({ name: "AI extraction", columns: ["name", "price"] });
     const sent = JSON.stringify(llm.requests[llm.requests.length - 1]?.messages);

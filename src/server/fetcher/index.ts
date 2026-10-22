@@ -37,13 +37,16 @@ export type FetchOptions = {
  * The one entry point for loading a page. Order: network guard → site rule → robots.txt →
  * wait for this host's turn → fetch → bot-check detection → backoff and stats bookkeeping.
  */
-export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions = {}): Promise<FetchedPage> {
+/**
+ * Everything that must be true before Scaper may load a URL: public address (unless allowed), site not paused
+ * or backing off, robots.txt allows it. Returns the delay to keep between requests to this host.
+ * Used by fetchPage and by the agent's browser session for every navigation.
+ */
+export async function preflight(url: string, opts: { signal?: AbortSignal } = {}) {
   const s = getSettings().scraping;
-  const started = Date.now();
   const notes: string[] = [];
   const host = new URL(url).hostname;
   const rule = ruleForHost(host);
-  const timeoutMs = s.timeoutSeconds * 1000;
   const fastUa = rule?.user_agent || s.userAgent || DEFAULT_FAST_UA;
   const browserUa = rule?.user_agent || s.userAgent;
   const headers = Object.fromEntries((rule?.headers ?? []).map((h) => [h.name, h.value]));
@@ -73,6 +76,13 @@ export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions
       notes.push(`Using the site's crawl delay of ${verdict.crawlDelaySeconds}s.`);
     }
   }
+  return { s, host, rule, fastUa, browserUa, headers, guard, minDelayMs, notes };
+}
+
+export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions = {}): Promise<FetchedPage> {
+  const started = Date.now();
+  const { s, host, rule, fastUa, browserUa, headers, guard, minDelayMs, notes } = await preflight(url, opts);
+  const timeoutMs = s.timeoutSeconds * 1000;
 
   return withHostTurn(host, minDelayMs, async () => {
     if (opts.signal?.aborted) throw new FetchError("cancelled", "Cancelled.");

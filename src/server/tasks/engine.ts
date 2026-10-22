@@ -3,10 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { defaultTaskOptions, type ExtractSpec, type FetchMode, type TaskOptions } from "@/lib/schemas";
 import type { Cell, Dataset, PageLog, ScrapeResult } from "@/lib/types";
-import { aiExtract } from "../ai/extract";
+import { aiExtract, enrichRows } from "../ai/extract";
 import { env } from "../env";
 import { autoExtract } from "../extract/auto";
-import { absolutize, load, readableText, safeSelect } from "../extract/dom";
+import { absolutize, load, safeSelect } from "../extract/dom";
 import { extractWithSelectors } from "../extract/selectors";
 import { serializeDataset } from "../export/formats";
 import { fetchPage, FetchError } from "../fetcher";
@@ -96,11 +96,25 @@ function mergeInto(target: Map<string, Dataset>, datasets: Dataset[]) {
   }
 }
 
-async function extractPage(html: string, url: string, extract: ExtractSpec, text: string | undefined) {
-  if (extract.type === "auto") return { ...autoExtract(html, url), main: 0 };
-  if (extract.type === "selectors") return { datasets: [extractWithSelectors(html, url, extract)], meta: {}, suggestions: undefined, main: 0 };
-  const pageText = text?.trim() ? text : readableText(load(html));
-  return { datasets: [await aiExtract(pageText, url, extract.instruction, extract.useFastModel ? "fast" : "main")], meta: {}, suggestions: undefined, main: 0 };
+type PageExtract = { datasets: Dataset[]; meta: Record<string, unknown>; suggestions?: ScrapeResult["suggestions"]; notes: string[]; aiFallback?: boolean };
+
+async function extractPage(html: string, url: string, extract: ExtractSpec, o: TaskOptions, signal?: AbortSignal): Promise<PageExtract> {
+  if (extract.type === "auto") return { ...autoExtract(html, url), notes: [] };
+  if (extract.type === "selectors") {
+    const ds = extractWithSelectors(html, url, extract);
+    // Self-healing read: when the selectors find nothing (the site changed its layout), the AI reads the page with the same column names.
+    if (!ds.rows.length && o.aiFallback && extract.fields.length) {
+      const r = await aiExtract(html, url, {
+        type: "ai", scope: extract.itemSelector ? "list" : "single", input: "main", useFastModel: true,
+        instruction: `Extract ${extract.itemSelector ? "every item" : "the values"} with these fields`,
+        fields: extract.fields.map((f) => ({ name: f.name, type: f.attr === "href" ? "url" : f.attr === "src" ? "image" : f.transforms.some((t) => t.op === "number") ? "number" : "text", description: "" })),
+      }, { signal });
+      return { datasets: [{ ...r.dataset, name: ds.name }], meta: {}, notes: r.notes, aiFallback: true };
+    }
+    return { datasets: [ds], meta: {}, notes: [] };
+  }
+  const r = await aiExtract(html, url, extract, { signal });
+  return { datasets: [r.dataset], meta: {}, notes: r.notes };
 }
 
 async function readSitemapUrls(o: TaskOptions["sitemap"], hooks: RunHooks): Promise<string[]> {
@@ -141,9 +155,12 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
 
   // CSV inputs: one start URL per row, with {{column}} filled in (URL-encoded).
   const inputs = o.inputs.trim() ? csvRecords(o.inputs) : [];
-  type QueueItem = { url: string; depth: number; pageNo: number; vars?: Record<string, string> };
+  type QueueItem = { url: string; depth: number; pageNo: number; vars?: Record<string, string>; category?: string };
   let queue: QueueItem[];
-  if (inputs.length) {
+  if (o.categories.length) {
+    // Category scrape: read each category page (with its own pagination) instead of the start URL.
+    queue = o.categories.flatMap((c) => parseUrlList([c.url]).map((url) => ({ url, depth: 0, pageNo: 1, category: c.name })));
+  } else if (inputs.length) {
     queue = inputs.flatMap((vars) => parseUrlList([fillTemplate(input.url, vars, true), ...o.startUrls.map((u) => fillTemplate(u, vars, true))]).map((url) => ({ url, depth: 0, pageNo: 1, vars })));
   } else {
     queue = parseUrlList([input.url, ...o.startUrls]).map((url) => ({ url, depth: 0, pageNo: 1 }));
@@ -164,6 +181,7 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
   let cancelled = false;
   let fetched = 0;
   let okPages = 0;
+  let aiFallbackPages = 0;
   const mainRows = () => [...merged.values()][mainDatasetIndex([...merged.values()])]?.rows.length ?? 0;
 
   log("info", `Starting with ${starts.length} URL(s), up to ${o.limits.maxPages} page(s).`);
@@ -190,8 +208,13 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
       let meta = {};
       let suggestions: ScrapeResult["suggestions"];
       for (const [i, html] of htmls.entries()) {
-        const ex = await extractPage(html, page.finalUrl, input.extract, htmls.length === 1 ? page.text : undefined);
+        const ex = await extractPage(html, page.finalUrl, input.extract, o, hooks.signal);
         if (i === 0) { meta = ex.meta; suggestions = ex.suggestions; }
+        for (const n of ex.notes) if (!notes.includes(n) && notes.length < 40) notes.push(n);
+        if (ex.aiFallback) {
+          aiFallbackPages++;
+          log("warn", `Selectors found nothing on ${page.finalUrl}; the AI read the page instead.`);
+        }
         for (const d of ex.datasets) {
           const existing = pageSets.find((p) => p.name === d.name);
           if (existing) { existing.rows.push(...d.rows); for (const c of d.columns) if (!existing.columns.includes(c)) existing.columns.push(c); }
@@ -202,6 +225,10 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
       if (mainSet && o.includeSourceUrl) {
         for (const r of mainSet.rows) r.source_url = page.finalUrl;
         if (!mainSet.columns.includes("source_url")) mainSet.columns.push("source_url");
+      }
+      if (mainSet && item.category) {
+        for (const r of mainSet.rows) r.category = item.category;
+        if (!mainSet.columns.includes("category")) mainSet.columns.unshift("category");
       }
       if (mainSet && item.vars) {
         for (const [k, v] of Object.entries(item.vars)) {
@@ -253,7 +280,7 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
       if (pagination.type === "next" && item.pageNo < pagination.maxPages) {
         const $ = load(htmls[htmls.length - 1]!);
         const next = absolutize(safeSelect($, pagination.selector).first().attr("href"), page.finalUrl);
-        if (next && !visited.has(normalizeForVisit(next))) queue.unshift({ url: next, depth: item.depth, pageNo: item.pageNo + 1, vars: item.vars });
+        if (next && !visited.has(normalizeForVisit(next))) queue.unshift({ url: next, depth: item.depth, pageNo: item.pageNo + 1, vars: item.vars, category: item.category });
       }
       // Crawl: queue matching links one level deeper.
       if (o.crawl.enabled && item.depth < o.crawl.maxDepth) {
@@ -298,6 +325,12 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
   });
   const main = datasets[mi];
   const rowCount = main?.rows.length ?? 0;
+  if (aiFallbackPages) notes.push(`The selectors found nothing on ${aiFallbackPages} page(s), so your AI read them instead. Use "Fix with AI" on the task to update the selectors.`);
+  if (main && rowCount && o.aiColumns.length && !cancelled) {
+    log("info", `Filling ${o.aiColumns.length} AI column(s) for up to ${Math.min(rowCount, o.aiColumnsMaxRows)} row(s).`);
+    hooks.progress?.({ done: fetched, total: fetched, rows: rowCount, label: "Filling AI columns" });
+    await enrichRows(main, o.aiColumns, o.aiColumnsMaxRows, { signal: hooks.signal, log: (l, m) => log(l, m) });
+  }
   if (incremental && newlySeen.length && !cancelled) markSeen(input.recipeId!, newlySeen);
   if (main && input.extract.type === "selectors" && !rowCount && okPages) {
     notes.push("No elements matched. Try Auto mode to see suggested selectors, or Browser mode if the page builds its content with JavaScript.");

@@ -38,7 +38,7 @@ function Step({ done, title, children, href, cta }: { done: boolean; title: stri
         <p className={done ? "text-sm font-medium text-muted line-through" : "text-sm font-medium"}>{title}</p>
         {!done && <div className="mt-0.5 text-sm text-muted">{children}</div>}
       </div>
-      {!done && href && <Link href={href} className="shrink-0 self-center text-sm font-medium text-accent hover:underline">{cta}</Link>}
+      {!done && href && <Link prefetch={false} href={href} className="shrink-0 self-center text-sm font-medium text-accent hover:underline">{cta}</Link>}
     </li>
   );
 }
@@ -61,9 +61,9 @@ export default function Dashboard() {
         title="Dashboard"
         description="Everything Scaper collects and watches, at a glance."
         actions={<>
-          <Link href="/scrape"><Button variant="secondary" icon={<ScanSearch className="size-4" />}>Quick scrape</Button></Link>
-          <Link href="/watchers/new"><Button variant="secondary" icon={<Radar className="size-4" />}>New watcher</Button></Link>
-          <Link href="/tasks/new"><Button icon={<Plus className="size-4" />}>New task</Button></Link>
+          <Link prefetch={false} href="/scrape"><Button variant="secondary" icon={<ScanSearch className="size-4" />}>Quick scrape</Button></Link>
+          <Link prefetch={false} href="/watchers/new"><Button variant="secondary" icon={<Radar className="size-4" />}>New watcher</Button></Link>
+          <Link prefetch={false} href="/tasks/new"><Button icon={<Plus className="size-4" />}>New task</Button></Link>
         </>}
       />
 
@@ -75,7 +75,7 @@ export default function Dashboard() {
             <div className="space-y-2">
               {data.failingWatchers > 0 && (
                 <Callout tone="warning" icon={<AlertTriangle className="size-4 text-warning" />} title={`${data.failingWatchers} watcher${data.failingWatchers === 1 ? " is" : "s are"} failing`}
-                  action={<Link href="/watchers?status=errors" className="shrink-0 text-sm font-medium text-accent hover:underline">Review</Link>}>
+                  action={<Link prefetch={false} href="/watchers?status=errors" className="shrink-0 text-sm font-medium text-accent hover:underline">Review</Link>}>
                   Usually a selector stopped matching after a site redesign, or the site is blocking automated checks.
                 </Callout>
               )}
@@ -132,13 +132,13 @@ export default function Dashboard() {
 
           <div className="grid gap-6 lg:grid-cols-3">
             <Card>
-              <CardHeader title="Running now" actions={<Link href="/runs" className="text-sm font-medium text-accent hover:underline">All runs</Link>} />
+              <CardHeader title="Running now" actions={<Link prefetch={false} href="/runs" className="text-sm font-medium text-accent hover:underline">All runs</Link>} />
               {active.length ? (
                 <ul className="divide-y divide-border">
                   {active.slice(0, 6).map((j) => (
                     <li key={j.id} className="space-y-1.5 px-5 py-3">
                       <div className="flex items-center gap-2">
-                        <Link href={`/runs/${j.id}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:text-accent">{j.title}</Link>
+                        <Link prefetch={false} href={`/runs/${j.id}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:text-accent">{j.title}</Link>
                         <JobStatusBadge status={j.status} />
                       </div>
                       {j.status === "running" && <Progress label={j.title} value={j.progress?.total ? j.progress.done ?? 0 : null} max={j.progress?.total ?? 100} />}
@@ -152,12 +152,12 @@ export default function Dashboard() {
             </Card>
 
             <Card>
-              <CardHeader title="Recent alerts" actions={<Link href="/notifications" className="text-sm font-medium text-accent hover:underline">All alerts</Link>} />
+              <CardHeader title="Recent alerts" actions={<Link prefetch={false} href="/notifications" className="text-sm font-medium text-accent hover:underline">All alerts</Link>} />
               {data.recentAlerts.length ? (
                 <ul className="divide-y divide-border">
                   {data.recentAlerts.map((a) => (
                     <li key={a.id}>
-                      <Link href={a.watcher_id ? `/watchers/${a.watcher_id}` : "/notifications"} className="flex items-start gap-3 px-5 py-3 hover:bg-surface-2/50">
+                      <Link prefetch={false} href={a.watcher_id ? `/watchers/${a.watcher_id}` : "/notifications"} className="flex items-start gap-3 px-5 py-3 hover:bg-surface-2/50">
                         <span className={a.read_at ? "mt-1.5 size-2 shrink-0 rounded-full bg-border" : "mt-1.5 size-2 shrink-0 rounded-full bg-accent"} aria-hidden />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium">{a.title}</span>
@@ -174,12 +174,12 @@ export default function Dashboard() {
             </Card>
 
             <Card>
-              <CardHeader title="Next checks" actions={<Link href="/watchers" className="text-sm font-medium text-accent hover:underline">Watchers</Link>} />
+              <CardHeader title="Next checks" actions={<Link prefetch={false} href="/watchers" className="text-sm font-medium text-accent hover:underline">Watchers</Link>} />
               {data.upcoming.length ? (
                 <ul className="divide-y divide-border">
                   {data.upcoming.map((w) => (
                     <li key={w.id}>
-                      <Link href={`/watchers/${w.id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-surface-2/50">
+                      <Link prefetch={false} href={`/watchers/${w.id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-surface-2/50">
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium">{w.name}</span>
                           <span className="block truncate text-xs text-muted">{hostOf(w.url)}</span>
@@ -191,16 +191,16 @@ export default function Dashboard() {
                   ))}
                 </ul>
               ) : (
-                <EmptyState icon={<Radar className="size-5" />} title="No watchers yet" action={<Link href="/watchers/new"><Button size="sm">Add watcher</Button></Link>}>Watch prices, stock, news pages, feeds or uptime.</EmptyState>
+                <EmptyState icon={<Radar className="size-5" />} title="No watchers yet" action={<Link prefetch={false} href="/watchers/new"><Button size="sm">Add watcher</Button></Link>}>Watch prices, stock, news pages, feeds or uptime.</EmptyState>
               )}
             </Card>
           </div>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted">
             <span className="inline-flex items-center gap-1.5"><span className={data.scheduler.running ? "size-2 rounded-full bg-success" : "size-2 rounded-full bg-danger"} />Scheduler {data.scheduler.running ? `running · last tick ${timeAgo(data.scheduler.lastTick)}` : "stopped"}</span>
-            <span className="inline-flex items-center gap-1.5"><Bot className="size-3.5" />AI {data.ai.configured ? `connected · ${data.ai.usage.requests} request${data.ai.usage.requests === 1 ? "" : "s"} today` : <Link href="/settings?tab=ai" className="text-accent hover:underline">not set up</Link>}</span>
+            <span className="inline-flex items-center gap-1.5"><Bot className="size-3.5" />AI {data.ai.configured ? `connected · ${data.ai.usage.requests} request${data.ai.usage.requests === 1 ? "" : "s"} today` : <Link prefetch={false} href="/settings?tab=ai" className="text-accent hover:underline">not set up</Link>}</span>
             <span>Browser mode {data.browser ? <Badge tone="success">ready</Badge> : <Badge tone="warning">not installed</Badge>}</span>
-            <Link href="/logs" className="inline-flex items-center gap-1 text-accent hover:underline">Logs <ArrowRight className="size-3" /></Link>
+            <Link prefetch={false} href="/logs" className="inline-flex items-center gap-1 text-accent hover:underline">Logs <ArrowRight className="size-3" /></Link>
           </div>
         </div>
       )}

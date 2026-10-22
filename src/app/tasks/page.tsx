@@ -100,19 +100,19 @@ function TasksPage() {
         title="Tasks"
         description="Saved scrapers: many pages, schedules, change alerts and exports."
         actions={<>
-          <Link href="/scrape"><Button variant="secondary">Quick scrape</Button></Link>
-          <Link href="/tasks/new"><Button icon={<Plus className="size-4" />}>New task</Button></Link>
+          <Link prefetch={false} href="/scrape"><Button variant="secondary">Quick scrape</Button></Link>
+          <Link prefetch={false} href="/tasks/new"><Button icon={<Plus className="size-4" />}>New task</Button></Link>
         </>}
       />
 
       {error ? <ErrorNote message={error} onRetry={reload} /> : loading ? <Card><LoadingRows rows={5} /></Card> : tasks.length === 0 ? (
         <Card>
-          <EmptyState icon={<ListChecks className="size-5" />} title="No tasks yet" action={<Link href="/tasks/new"><Button icon={<Plus className="size-4" />}>New task</Button></Link>}>
+          <EmptyState icon={<ListChecks className="size-5" />} title="No tasks yet" action={<Link prefetch={false} href="/tasks/new"><Button icon={<Plus className="size-4" />}>New task</Button></Link>}>
             A task remembers how to scrape a site, runs on a schedule and tells you when the data changes. Start from a template:
           </EmptyState>
           <div className="grid gap-3 border-t border-border p-5 sm:grid-cols-2 xl:grid-cols-3">
             {TEMPLATES.map((t) => (
-              <Link key={t.id} href={`/tasks/new?template=${t.id}`} className="rounded-xl border border-border p-4 transition-colors hover:border-accent hover:bg-accent-soft/30">
+              <Link prefetch={false} key={t.id} href={`/tasks/new?template=${t.id}`} className="rounded-xl border border-border p-4 transition-colors hover:border-accent hover:bg-accent-soft/30">
                 <p className="flex items-center gap-2 font-medium">{t.icon}{t.title}</p>
                 <p className="mt-1 text-sm text-muted">{t.description}</p>
               </Link>
@@ -169,7 +169,7 @@ function TasksPage() {
                     <tr key={t.id} className="hover:bg-surface-2/40">
                       <td className="px-4 py-3 align-top"><Checkbox hideLabel label={`Select ${t.name}`} checked={selected.has(t.id)} onChange={(v) => { const n = new Set(selected); if (v) n.add(t.id); else n.delete(t.id); setSelected(n); }} /></td>
                       <td className="max-w-md px-3 py-3">
-                        <Link href={`/tasks/${t.id}`} className="font-medium hover:text-accent">{t.name}</Link>
+                        <Link prefetch={false} href={`/tasks/${t.id}`} className="font-medium hover:text-accent">{t.name}</Link>
                         <p className="truncate text-xs text-muted">{hostOf(t.url)} · {t.mode} · {t.extract.type === "selectors" ? `${t.extract.fields.length} fields` : t.extract.type}{t.options.startUrls.length ? ` · ${t.options.startUrls.length + 1} start URLs` : ""}{t.options.crawl.enabled ? " · crawl" : ""}{t.options.detail.enabled ? " · detail pages" : ""}</p>
                         {t.tags.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{t.tags.map((x) => <Badge key={x}>{x}</Badge>)}</div>}
                       </td>

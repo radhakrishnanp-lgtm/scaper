@@ -27,6 +27,18 @@
 | Abuse / cost | Per-endpoint rate limits, AI daily request cap, per-host crawl delay and backoff | `api.ts`, `ai/client.ts`, `fetcher/politeness.ts` |
 | Clickjacking etc. | `X-Frame-Options: DENY`, `nosniff`, Referrer-Policy, Permissions-Policy | `next.config.ts` |
 
+## AI and private mode
+
+| Concern | What Scaper does | Where |
+|---|---|---|
+| Provider keys | Stored in the local database only; the browser sees `••••last4`. Header values named like key/token/auth/secret/cookie are masked too. A masked value sent back means "keep the saved one" | `repo/settings.ts` |
+| Prompt injection | Page text is wrapped as untrusted data with an instruction to ignore what it says; tools that change things wait for your OK in "Ask me first" mode (the default) | `ai/extract.ts`, `ai/agent.ts` |
+| Model output | Never executed. Selectors are tested with a static parser; extracted values are type-checked and compared with the page | `ai/suggest.ts`, `ai/extract.ts` |
+| Agent browser | Every navigation, including where a click lands, passes the same checks as a scrape (public address, robots.txt, site pause, backoff, polite delay). Bot checks stop the session. Passwords are never typed; downloads are off; 40 actions per request | `ai/browser-session.ts` |
+| Cost | Daily request cap, monthly budget, step limit per agent request | `ai/client.ts` |
+| Private mode | Private work runs inside a private context: results, jobs and agent chats live in memory (1 to 2 hours), and the AI log, site statistics and activity log skip it. Wiping history uses `secure_delete`, VACUUM and a WAL checkpoint so deleted rows cannot be read from the file | `server/privacy.ts`, `repo/history.ts` |
+| What private mode is not | It does not hide you from websites (they see a normal, polite visit) or from your AI provider (it receives the page text). Use a local model for that | Settings → Privacy |
+
 ## Red-team checks run
 
 | Attempt | Result |

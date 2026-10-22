@@ -69,6 +69,14 @@ export type Field = z.infer<typeof fieldSchema>;
 /** A field as typed by hand or by other code: defaults may be left out. */
 export type FieldInput = z.input<typeof fieldSchema>;
 
+export const AI_FIELD_TYPES = ["text", "number", "url", "image", "boolean", "date", "list"] as const;
+export const aiFieldSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(60).regex(/^[\w\- ]+$/, "Use letters, numbers, spaces, - or _"),
+  type: z.enum(AI_FIELD_TYPES).default("text"),
+  description: z.string().trim().max(300).default(""),
+});
+export type AiField = z.infer<typeof aiFieldSchema>;
+
 export const extractSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("auto") }),
   z.object({
@@ -79,10 +87,17 @@ export const extractSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("ai"),
     instruction: z.string().trim().min(3, "Describe what to extract").max(2000),
+    // Optional column list; without it the model picks the columns.
+    fields: z.array(aiFieldSchema).max(30).default([]),
+    // "list": one row per item on the page. "single": one row describing the page.
+    scope: z.enum(["list", "single"]).default("list"),
+    // "main": skip menus, headers and footers. "full": the whole page.
+    input: z.enum(["main", "full"]).default("main"),
     useFastModel: z.boolean().default(true),
   }),
 ]);
 export type ExtractSpec = z.infer<typeof extractSchema>;
+export type AiExtractSpec = Extract<ExtractSpec, { type: "ai" }>;
 
 /** Things to do in the browser before reading the page: accept a cookie banner, pick a city, type a search, log in to your own account. */
 export const browserStepSchema = z.discriminatedUnion("action", [
@@ -125,6 +140,15 @@ export const notifySchema = z.object({
 });
 export type NotifyChannels = z.infer<typeof notifySchema>;
 export const NOTIFY_CHANNELS = ["desktop", "webhook", "telegram", "discord", "slack", "ntfy", "email"] as const;
+
+export const aiColumnSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(60).regex(/^[\w\- ]+$/, "Use letters, numbers, spaces, - or _"),
+  prompt: z.string().trim().min(3, "Say what the AI should fill in").max(1000),
+  // Columns the AI reads; empty = all of them.
+  from: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+  useFastModel: z.boolean().default(true),
+});
+export type AiColumn = z.infer<typeof aiColumnSchema>;
 
 export const taskOptionsSchema = z.object({
   // More start URLs, one per line. Ranges expand: https://site/page/{1..5}
@@ -180,6 +204,13 @@ export const taskOptionsSchema = z.object({
     files: z.array(z.enum(["csv", "json", "xlsx", "ndjson"])).max(4).default([]),
     webhook: z.boolean().default(false),
   }).default({ files: [], webhook: false }),
+  // Category pages to read instead of the start URL; each row gets a "category" column.
+  categories: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().trim().min(1).max(2048) })).max(500).default([]),
+  // When the selectors find nothing on a page that loaded fine, let the AI read that page instead.
+  aiFallback: z.boolean().default(false),
+  // Extra columns the AI fills in from each row: a category, a translation, a short summary ...
+  aiColumns: z.array(aiColumnSchema).max(5).default([]),
+  aiColumnsMaxRows: z.number().int().min(1).max(5000).default(200),
 });
 export type TaskOptions = z.infer<typeof taskOptionsSchema>;
 export const defaultTaskOptions = (): TaskOptions => taskOptionsSchema.parse({});
@@ -194,6 +225,8 @@ export const scrapeRequestSchema = z.object({
   screenshot: z.boolean().default(false),
   recipeId: z.string().uuid().optional(),
   options: taskOptionsSchema.optional(),
+  // Private: keep the result in memory only (overrides the private mode setting when set).
+  private: z.boolean().optional(),
 });
 
 export const taskSchema = z.object({
@@ -365,8 +398,11 @@ export type DealSearchInput = z.infer<typeof dealSearchSchema>;
 export const agentRequestSchema = z.object({
   prompt: z.string().trim().min(3, "Tell the agent what to do").max(4000),
   useFastModel: z.boolean().default(false),
+  /** "main", "fast" or "<providerId>::<model>" for any saved model. */
+  model: z.string().trim().max(260).optional(),
   /** Continue the conversation of an earlier run. */
   followUpOf: z.string().max(40).optional(),
+  private: z.boolean().optional(),
 });
 
 export const siteRuleSchema = z.object({
@@ -383,14 +419,67 @@ export const siteRuleSchema = z.object({
 });
 export type SiteRuleInput = z.infer<typeof siteRuleSchema>;
 
+export const aiModelSchema = z.object({
+  id: z.string().trim().min(1, "Model id is required").max(200),
+  // Tokens the model can read at once; null = use the default context size.
+  contextWindow: z.number().int().min(1000).max(10_000_000).nullable().default(null),
+  // US dollars per million tokens, for cost tracking. 0 = free or unknown.
+  inputPrice: z.number().min(0).max(10_000).default(0),
+  outputPrice: z.number().min(0).max(10_000).default(0),
+  // What a capability test found; null = not tested.
+  tools: z.boolean().nullable().default(null),
+  json: z.boolean().nullable().default(null),
+});
+export type AiModel = z.infer<typeof aiModelSchema>;
+
+export const aiProviderSchema = z.object({
+  id: z.string().trim().min(1).max(40).regex(/^[\w-]+$/, "Use letters, numbers, - or _"),
+  name: z.string().trim().min(1, "Name is required").max(60),
+  baseUrl: z.string().trim().min(1, "Base URL is required").max(500).regex(/^https?:\/\/\S+$/i, "Start with http:// or https://"),
+  apiKey: z.string().trim().max(1000).default(""),
+  // How the key is sent: "Authorization: Bearer <key>" (most providers), an "api-key" header (Azure), or not at all (local models).
+  auth: z.enum(["bearer", "api-key", "none"]).default("bearer"),
+  headers: z.array(z.object({
+    name: z.string().trim().min(1).max(100).regex(/^[\w-]+$/, "Header names use letters, numbers and -"),
+    value: z.string().max(1000),
+  })).max(10).default([]),
+  models: z.array(aiModelSchema).max(200).default([]),
+  timeoutSeconds: z.number().int().min(5).max(900).default(120),
+  enabled: z.boolean().default(true),
+});
+export type AiProvider = z.infer<typeof aiProviderSchema>;
+
+export const modelRefSchema = z.object({ providerId: z.string().trim().max(40).default(""), model: z.string().trim().max(200).default("") });
+export type ModelRef = z.infer<typeof modelRefSchema>;
+
 export const aiSettingsSchema = z.object({
+  // Single-provider fields from older versions. Saving them updates the provider called "default".
   baseUrl: z.string().trim().max(500).default(""),
   apiKey: z.string().trim().max(500).default(""),
   model: z.string().trim().max(200).default(""),
   fastModel: z.string().trim().max(200).default(""),
+  providers: z.array(aiProviderSchema).max(12).default([]),
+  main: modelRefSchema.default({ providerId: "", model: "" }),
+  fast: modelRefSchema.default({ providerId: "", model: "" }),
+  // Tried in order when the main or fast model fails (network error, rate limit, outage).
+  fallbacks: z.array(modelRefSchema).max(3).default([]),
   dailyRequestLimit: z.number().int().min(1).max(100000).default(300),
-  maxTokens: z.number().int().min(64).max(32000).default(1500),
-  agentMaxSteps: z.number().int().min(1).max(25).default(8),
+  // US dollars per calendar month across all models. 0 = no budget.
+  monthlyBudget: z.number().min(0).max(100_000).default(0),
+  maxTokens: z.number().int().min(64).max(64_000).default(2000),
+  temperature: z.number().min(0).max(2).default(0.2),
+  // How much page text goes to the model when its context window is unknown.
+  contextTokens: z.number().int().min(2000).max(1_000_000).default(24_000),
+  agentMaxSteps: z.number().int().min(1).max(40).default(12),
+  // "ask": the agent waits for your OK before changing anything. "auto": it goes ahead.
+  agentApproval: z.enum(["ask", "auto"]).default("ask"),
+  // Added to every agent conversation: who you are, your country, currency, preferred shops ...
+  instructions: z.string().max(4000).default(""),
+  // Keep the full prompt and reply of each AI call in the AI log.
+  logPrompts: z.boolean().default(true),
+  keepCallsDays: z.number().int().min(1).max(365).default(60),
+  // Reuse the answer to an identical request for this many hours (extraction, selectors). 0 = off.
+  cacheHours: z.number().int().min(0).max(720).default(0),
 });
 
 export const scrapingSettingsSchema = z.object({
@@ -441,6 +530,8 @@ export const dataSettingsSchema = z.object({
   keepEventsDays: z.number().int().min(1).max(365).default(30),
   autoBackup: z.boolean().default(true),
   keepBackups: z.number().int().min(1).max(60).default(7),
+  // Quick scrapes, AI extraction, category scrapes and agent chats are kept in memory only, never on disk.
+  privateMode: z.boolean().default(false),
 });
 
 export const settingsSchema = z.object({

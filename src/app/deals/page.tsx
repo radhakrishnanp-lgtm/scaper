@@ -166,7 +166,7 @@ function TrackedTab() {
               <li key={p.id} className="flex gap-4 px-5 py-4 hover:bg-surface-2/40">
                 <Thumb src={p.image} alt="" />
                 <div className="min-w-0 flex-1">
-                  <Link href={`/deals/${p.id}`} className="line-clamp-2 text-sm font-medium hover:text-accent">{p.title ?? hostOf(p.url)}</Link>
+                  <Link prefetch={false} href={`/deals/${p.id}`} className="line-clamp-2 text-sm font-medium hover:text-accent">{p.title ?? hostOf(p.url)}</Link>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                     <span className="font-semibold tabular-nums">{money(p.current_price, p.currency)}</span>
                     {p.list_price && p.list_price > (p.current_price ?? 0) && <span className="text-muted line-through tabular-nums">{money(p.list_price, p.currency)}</span>}
@@ -383,7 +383,7 @@ function SearchesTab() {
   return (
     <div className="space-y-4">
       {!searches.length ? (
-        <Card><EmptyState icon={<BookmarkPlus className="size-5" />} title="No saved searches" action={<Link href="/deals?tab=find"><Button>Find deals</Button></Link>}>Scan a listing page on the Find deals tab, then save it. Scaper re-checks it and alerts you about new deals only.</EmptyState></Card>
+        <Card><EmptyState icon={<BookmarkPlus className="size-5" />} title="No saved searches" action={<Link prefetch={false} href="/deals?tab=find"><Button>Find deals</Button></Link>}>Scan a listing page on the Find deals tab, then save it. Scaper re-checks it and alerts you about new deals only.</EmptyState></Card>
       ) : searches.map((s) => (
         <Card key={s.id}>
           <div className="flex flex-wrap items-start justify-between gap-3 p-4">

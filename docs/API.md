@@ -35,6 +35,11 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | GET `/api/runs/:id/export?format=csv\|xlsx\|json\|ndjson&dataset=N` | Download one dataset | – |
 | POST `/api/inspect` · POST `/api/inspect/test` | Screenshot and element boxes for the picker · live match count for a selector | 10/min · 120/min |
 | POST `/api/ai/suggest` | "Build with AI": proposes selectors and tests them on the page | 20/min |
+| POST `/api/ai/fields` | "Suggest columns" for AI extraction `{url, describe, mode, useFastModel}` → `{scope, instruction, fields}` | 20/min |
+| POST `/api/crawl/plan` | Category scrape step 1 `{url, goal, mode, maxCategories, pagesPerCategory, useFastModel, private}` → `{plan}` (categories, sample rows, selectors, pagination, other menu links) | 6/min |
+| POST `/api/crawl/run` | Step 2: run the plan as a job, or save it as a task with `save: {scheduleMinutes, cron}` → `{job, taskId}` | 10/min |
+| POST `/api/tasks/:id/heal` | "Fix with AI": new selectors for the same columns, tested on today's page; send `{apply: extract}` to save them | 6/min |
+| GET `/api/runs/:id/compare?with=&key=` | New, gone and changed rows against an earlier run of the same task | – |
 | POST `/api/steps/test` | Try page actions in the browser and get a screenshot | 8/min |
 | GET `/api/schedule/preview?cron=` | Next run times for a cron expression | – |
 
@@ -68,10 +73,16 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 
 | Method & path | Purpose | Rate limit |
 |---|---|---|
-| POST `/api/agent` | Start an agent run `{prompt, useFastModel, followUpOf?}`; poll the run | 10/min |
+| GET `/api/agent` · POST `/api/agent` | Tool catalog, approval mode and step limit · start a run `{prompt, model?: "main"\|"fast"\|"<providerId>::<model>", followUpOf?, private?}`; poll the run | 10/min |
+| POST `/api/agent/runs/:id/approve` | Answer a pending approval `{decision: allow\|allow_all\|deny}`; 409 when nothing is waiting | – |
 | GET `/api/agent/runs?q&limit` · GET/DELETE `/api/agent/runs/:id` | History · one run with its earlier turns (`thread`) · delete | – |
 | POST `/api/agent/runs/:id/stop` | Stop a running agent after its current step | – |
-| GET `/api/ai/usage` | Requests and tokens today and for 30 days | – |
+| GET `/api/ai/usage` | Requests, tokens and cost today, this month and for 30 days, with limits and per-model stats | – |
+| POST `/api/ai/models` · POST `/api/ai/test` | List a provider's models `{provider}` · test a model `{providerId \| provider, model}` (answers, JSON mode, tools) | – |
+| GET/DELETE `/api/ai/calls` · GET `/api/ai/calls/:id` | The AI log (`?purpose&status&model&q&before&limit&stats=30`); DELETE takes `?olderThanDays` · one call with prompt and reply | – |
+| GET/POST `/api/ai/memory` · DELETE `/api/ai/memory/:id` | The agent's memory notes | – |
+| GET `/api/history/timeline?types=&q&before&limit` | Everything Scaper did, newest first (scrape, agent, change, price, alert, ai) | – |
+| POST `/api/privacy/wipe` | Delete history `{scopes, olderThanDays?}` (scrapes, agent, ai_log, ai_cache, jobs, alerts, changes, prices, logs, site_stats, memory, exports, backups, private), then compact the database | 6/min |
 | GET/POST `/api/sites` · GET/DELETE `/api/sites/:host` · POST `/api/sites/:host/reset` | Per-site rules (slower delay, mode, headers, cookies, pause) and 30-day stats · reset backoff | – |
 | GET/PUT `/api/settings` | Settings (secrets masked; a masked value sent back means "unchanged") | – |
 | POST `/api/settings/test` | Test `ai`, `ai_fast`, `webhook`, `telegram`, `discord`, `slack`, `ntfy` or `email` | 10/min |
