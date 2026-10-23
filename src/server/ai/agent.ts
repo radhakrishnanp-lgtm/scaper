@@ -15,6 +15,7 @@ import { AgentBrowser } from "./browser-session";
 import { chat, contextBudget, modelLabel, resolveModel, AiError, type ChatMessage, type ModelChoice } from "./client";
 import { estimateTokens } from "./context";
 import { UNTRUSTED_NOTE } from "./extract";
+import { SUPERVISOR_DEFS, TEAM_PROMPT, isSupervisorTool, runSupervisorTool, stopTeam } from "./team";
 import { TOOL_DEFS, TOOLS, memoryForPrompt } from "./tools";
 
 const RULES = `You are Scaper's agent. You work for one person, on their own computer, using their own AI model. You can read websites, extract data, run and save scraping tasks, watch pages, track prices, find deals and manage Scaper, using the tools provided.
@@ -58,7 +59,8 @@ export function buildSystemPrompt(opts: { private: boolean; approval: "ask" | "a
     memory ? `What you know about the user (memory):\n${memory}` : "",
     `In Scaper right now: ${scaperSnapshot()}.`,
     opts.approval === "ask" ? "Actions that change things wait for the user's OK automatically; just call the tool." : "The user allowed you to make changes without asking; still only do what they asked for.",
-    opts.private ? "This conversation is private: nothing is saved to disk. Do not use remember." : "",
+    opts.private ? "This conversation is private: nothing is saved to disk. Do not use remember. Helper agents are not available in private conversations." : "",
+    !opts.private && ai.team.enabled ? TEAM_PROMPT(ai.team.maxAgents) : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -84,6 +86,7 @@ export function stopAgent(id: string) {
   answerApproval(id, "deny");
   state.ctrls.get(id)?.abort();
   updateAgentRun(id, { status: "error", error: "Stopped by you.", pending: null });
+  stopTeam(id, "Stopped by you.");
   bus.emit({ type: "agent", id, status: "error" });
   audit("agent.stopped", { runId: id });
   return true;
@@ -147,11 +150,13 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
   };
   const budget = Math.max(6000, contextBudget(choice) + 4000);
   const request = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  const team = getSettings().ai.team.enabled && !getAgentRun(id)?.private;
+  const defs = team ? [...TOOL_DEFS, ...SUPERVISOR_DEFS] : TOOL_DEFS;
   try {
     for (let step = 0; step < maxSteps && !stopped(); step++) {
       const last = step === maxSteps - 1;
       fitToBudget(messages, budget);
-      const res = await chat(messages, { model: choice, tools: last ? undefined : TOOL_DEFS, signal: ctrl.signal });
+      const res = await chat(messages, { model: choice, tools: last ? undefined : defs, signal: ctrl.signal });
       tokensIn += res.tokensIn; tokensOut += res.tokensOut; cost += res.cost;
       if (stopped()) break;
       if (!res.toolCalls.length) {
@@ -171,8 +176,8 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
         const started = Date.now();
         try {
           args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
-          if (!tool) throw new Error(`Unknown tool ${call.function.name}.`);
-          if (tool.changes) {
+          if (!tool && !(team && isSupervisorTool(call.function.name))) throw new Error(`Unknown tool ${call.function.name}.`);
+          if (tool?.changes) {
             const summary = tool.describe?.(args) ?? `${call.function.name}(${JSON.stringify(args).slice(0, 200)})`;
             // The guardrail can only add a reason to ask: deleting always asks, and the decision model may flag more.
             const guard = await guardAction({ request, tool: call.function.name, summary, args, destructive: DESTRUCTIVE_TOOL.test(call.function.name), signal: ctrl.signal, refId: id });
@@ -192,7 +197,8 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
           if (stopped()) break;
           result = decided === "declined"
             ? "The user declined this action. Do not try it again; continue without it or explain what you would have done."
-            : await tool.run(args, { browser, signal: ctrl.signal, model: choice });
+            : tool ? await tool.run(args, { browser, signal: ctrl.signal, model: choice })
+              : await runSupervisorTool(call.function.name, args, { browser, signal: ctrl.signal, model: choice, teamId: id });
         } catch (e) {
           ok = false;
           result = `Error: ${e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (e as Error).message}`;
@@ -212,6 +218,7 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
     if (!stopped()) audit("agent.failed", { runId: id, error: message }, "warn");
   } finally {
     ctrl.abort();
+    stopTeam(id, "The supervisor finished before this helper did.");
     await browser.close().catch(() => undefined);
     state.stop.delete(id);
     state.allowAll.delete(id);

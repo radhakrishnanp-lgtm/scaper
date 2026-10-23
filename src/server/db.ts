@@ -483,6 +483,65 @@ CREATE TABLE saved_views (
 CREATE INDEX idx_saved_views_scope ON saved_views(scope, created_at);
 `,
   },
+  {
+    id: 7,
+    name: "agent_teams",
+    sql: `
+-- Helper agents a supervisor run starts: the instructions it wrote for each, what they did and what they found.
+CREATE TABLE agent_workers (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT '',
+  instructions TEXT NOT NULL,
+  task TEXT NOT NULL,
+  examples TEXT NOT NULL DEFAULT '',
+  tools TEXT NOT NULL DEFAULT '[]',
+  questions TEXT,
+  model TEXT NOT NULL DEFAULT 'fast',
+  playbook_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('running','done','error','stopped')),
+  steps TEXT NOT NULL DEFAULT '[]',
+  result TEXT,
+  error TEXT,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (team_id, name)
+);
+CREATE INDEX idx_workers_team ON agent_workers(team_id, created_at);
+
+-- The team's shared memory: notes any agent in the team writes and every agent can read.
+CREATE TABLE team_memory (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  author TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_team_memory ON team_memory(team_id, created_at);
+
+-- Instructions, examples and decision questions the supervisor wrote and keeps improving, per kind of job.
+CREATE TABLE agent_playbooks (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL DEFAULT '',
+  instructions TEXT NOT NULL,
+  examples TEXT NOT NULL DEFAULT '',
+  questions TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  uses INTEGER NOT NULL DEFAULT 0,
+  wins INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'agent' CHECK (source IN ('agent','you')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`,
+  },
 ];
 
 function migrate(db: Database.Database) {

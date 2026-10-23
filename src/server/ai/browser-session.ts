@@ -199,6 +199,13 @@ export class AgentBrowser {
     return `URL: ${ctx.url}\nTitle: ${ctx.title}\n<page>\n${ctx.markdown}\n\nLinks:\n${linkLines(ctx.links, ctx.url, 60)}\n</page>`;
   }
 
+  /** A JPEG of the visible part of the open page (base64), for visual checks by the decision model. */
+  async screenshot(): Promise<string | null> {
+    if (!this.page || this.page.url() === "about:blank") return null;
+    const buf = await this.page.screenshot({ type: "jpeg", quality: 55, fullPage: false });
+    return buf.toString("base64");
+  }
+
   async html() {
     const page = await this.ensure();
     return { html: await page.content(), url: page.url() };

@@ -2,8 +2,9 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BadgePercent, Bot, Check, CheckCircle2, EyeOff, Hand, X, ChevronRight, CornerDownRight, ListChecks, MessageSquarePlus, Radar, Search, Send, ShieldCheck, Square, Trash2, Wrench, XCircle } from "lucide-react";
+import { BadgePercent, BookOpen, Bot, Check, CheckCircle2, EyeOff, Hand, X, ChevronRight, CornerDownRight, ListChecks, MessageSquarePlus, Radar, Search, Send, ShieldCheck, Square, Trash2, Wrench, XCircle } from "lucide-react";
 import type { AgentRun, AgentStep } from "@/server/repo/agent";
+import { PlaybooksDialog, TeamPanel, type TeamData } from "@/components/agent-team";
 import { CopyButton } from "@/components/data-table";
 import { ConfirmDialog } from "@/components/dialog";
 import { Markdown } from "@/components/markdown";
@@ -44,6 +45,9 @@ const TOOL_LABEL: Record<string, string> = {
   scan_deals: "Scanned deals", price_history: "Checked price history", list_tracked_products: "Listed tracked products", track_product: "Started tracking", untrack_product: "Stopped tracking", create_deal_search: "Created deal search",
   task_health: "Checked task health", repair_task: "Started AI repair", job_status: "Checked job", change_inbox: "Read change inbox", review_changes: "Marked changes reviewed", briefing: "Wrote briefing",
   notify_user: "Sent alert", site_info: "Checked site", slow_down_site: "Slowed down site", remember: "Remembered", forget: "Forgot", search_scaper: "Searched Scaper", ai_usage: "Checked AI usage",
+  spawn_agents: "Started helpers", team_status: "Checked the team", wait_for_agents: "Waited for helpers", message_agent: "Messaged a helper", stop_agent: "Stopped a helper",
+  find_playbooks: "Looked up playbooks", save_playbook: "Saved a playbook", rate_playbook: "Rated a playbook", shared_memory_write: "Shared a note", shared_memory_read: "Read shared memory",
+  decide: "Asked the decision model", check_scrape: "Checked if OK to scrape", pick_links: "Scored links",
   // Older conversations
   open_page: "Opened page",
 };
@@ -52,7 +56,7 @@ type ProviderModels = { id: string; name: string; enabled: boolean; models: { id
 type AiPublic = { main: { providerId: string; model: string }; fast: { providerId: string; model: string }; providers: ProviderModels[] };
 const money = (v: number) => (v >= 0.01 ? `$${v.toFixed(2)}` : v > 0 ? `$${v.toFixed(4)}` : "");
 
-type Detail = { run: AgentRun; thread: AgentRun[] };
+type Detail = { run: AgentRun; thread: AgentRun[]; team: TeamData | null };
 
 function prettyResult(text: string) {
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
@@ -223,6 +227,7 @@ function AgentPage() {
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [del, setDel] = useState<AgentRun | null>(null);
+  const [playbooks, setPlaybooks] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   const ai = settings.data?.settings.ai;
@@ -276,7 +281,10 @@ function AgentPage() {
   return (
     <>
       <PageHeader title="Agent" description="Ask in plain words. It scrapes, compares prices, tracks products and sets up watchers with your own AI model, and shows every step it takes."
-        actions={selected ? <Button variant="secondary" icon={<MessageSquarePlus className="size-4" />} onClick={() => { setSelected(""); setPrompt(""); }}>New conversation</Button> : undefined} />
+        actions={<div className="flex flex-wrap gap-2">
+          <Button variant="secondary" icon={<BookOpen className="size-4" />} onClick={() => setPlaybooks(true)}>Playbooks</Button>
+          {selected && <Button variant="secondary" icon={<MessageSquarePlus className="size-4" />} onClick={() => { setSelected(""); setPrompt(""); }}>New conversation</Button>}
+        </div>} />
       {settings.data && !configured && (
         <div className="mb-6"><Callout tone="warning" title="Connect a model first" action={<Link prefetch={false} href="/settings?tab=ai"><Button size="sm">Open AI settings</Button></Link>}>Any OpenAI-compatible endpoint works: OpenAI, OpenRouter, Groq, Together, DeepSeek, or Ollama and LM Studio on this computer. The model must support tool calling.</Callout></div>
       )}
@@ -336,6 +344,7 @@ function AgentPage() {
                   <div key={t.id} className="opacity-90"><Turn run={t} compact /></div>
                 ))}
                 <Turn run={run} onStop={stop} stopping={stopping} onAnswered={() => void detail.reload()} />
+                {detail.data!.team && <TeamPanel team={detail.data!.team} runId={run.id} onChanged={() => void detail.reload()} />}
                 <div ref={bottom} />
               </div>
               <div className="border-t border-border">
@@ -376,6 +385,7 @@ function AgentPage() {
           )}
         </Card>
       </div>
+      {playbooks && <PlaybooksDialog onClose={() => setPlaybooks(false)} />}
       <ConfirmDialog open={Boolean(del)} onCancel={() => setDel(null)} onConfirm={() => del && void remove(del)} confirmLabel="Delete" title="Delete this question and answer?"
         body={del?.status === "running" ? "It is still working; it will be stopped first." : "Follow-up questions after it are kept."} />
     </>

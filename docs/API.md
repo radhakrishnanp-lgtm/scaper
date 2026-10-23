@@ -115,7 +115,11 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | GET `/api/agent` · POST `/api/agent` | Tool catalog, approval mode and step limit · start a run `{prompt, model?: "main"\|"fast"\|"<providerId>::<model>", followUpOf?, private?}`; poll the run | 10/min |
 | POST `/api/agent/runs/:id/approve` | Answer a pending approval `{decision: allow\|allow_all\|deny}`; 409 when nothing is waiting | – |
 | GET `/api/agent/runs?q&limit` · GET/DELETE `/api/agent/runs/:id` | History · one run with its earlier turns (`thread`) · delete | – |
-| POST `/api/agent/runs/:id/stop` | Stop a running agent after its current step | – |
+| POST `/api/agent/runs/:id/stop` | Stop a running agent after its current step; its helpers stop too | – |
+| GET `/api/agent/runs/:id` → `team` | `{workers, memory}` when the run started helpers: each helper's name, role, instructions, task, examples, decision questions, tools, model, status, steps, report, tokens and cost, plus the shared memory notes; `null` otherwise | – |
+| POST `/api/agent/runs/:id/helpers/:wid/stop` | Stop one helper | – |
+| GET `/api/playbooks?q` · POST `/api/playbooks` | List playbooks (best success rate first when searching) · create `{name, kind?, instructions, examples?, questions?, notes?}` | – |
+| PUT/DELETE `/api/playbooks/:id` | Save a new version (name kept) · delete | – |
 | GET `/api/ai/usage` | Requests, tokens and cost today, this month and for 30 days, with limits and per-model stats | – |
 | POST `/api/ai/models` · POST `/api/ai/test` | List a provider's models `{provider}` · test a model `{providerId \| provider, model}` (answers, JSON mode, tools) | – |
 | GET/DELETE `/api/ai/calls` · GET `/api/ai/calls/:id` | The AI log (`?purpose&status&model&q&before&limit&stats=30`); DELETE takes `?olderThanDays` · one call with prompt and reply | – |

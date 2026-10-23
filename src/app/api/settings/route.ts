@@ -21,13 +21,24 @@ function dropMasked<T extends Record<string, unknown> | undefined>(section: T): 
   return Object.fromEntries(Object.entries(section).filter(([, v]) => !(typeof v === "string" && MASKED.test(v)))) as T;
 }
 
+/** The partial schema fills in defaults for fields that were not sent; only the fields the client sent are saved. */
+function onlySent<T extends Record<string, unknown> | undefined>(section: T, sent: unknown): T {
+  if (!section || !sent || typeof sent !== "object") return section;
+  return Object.fromEntries(Object.entries(section).filter(([k]) => k in sent)) as T;
+}
+
 export const PUT = handler(async (req) => {
-  const patch = await readJson(req, settingsPatchSchema);
+  const raw = (await req.clone().json().catch(() => ({}))) as Record<string, unknown>;
+  const parsed = await readJson(req, settingsPatchSchema);
+  const patch = {
+    ai: onlySent(parsed.ai, raw.ai), scraping: onlySent(parsed.scraping, raw.scraping), notifications: onlySent(parsed.notifications, raw.notifications),
+    data: onlySent(parsed.data, raw.data), integrations: onlySent(parsed.integrations, raw.integrations),
+  };
   if (patch.scraping?.proxyUrl) {
-    const ok = /^https?:\/\/[^\s]+$/i.test(patch.scraping.proxyUrl) || MASKED.test(patch.scraping.proxyUrl);
-    if (!ok) throw new HttpError(400, "validation", "Please fix the highlighted fields.", { "scraping.proxyUrl": "Use the form http://user:pass@host:port" });
+    const ok = /^(https?|socks5h?):\/\/[^\s]+$/i.test(patch.scraping.proxyUrl) || MASKED.test(patch.scraping.proxyUrl);
+    if (!ok) throw new HttpError(400, "validation", "Please fix the highlighted fields.", { "scraping.proxyUrl": "Use http://, https:// or socks5://, for example socks5://127.0.0.1:1080" });
   }
   const saved = saveSettings({ ai: dropMasked(patch.ai), scraping: dropMasked(patch.scraping), notifications: dropMasked(patch.notifications), data: patch.data, integrations: patch.integrations });
-  audit("settings.updated", { sections: Object.keys(patch) });
+  audit("settings.updated", { sections: Object.keys(raw) });
   return { settings: publicSettings(saved) };
 });

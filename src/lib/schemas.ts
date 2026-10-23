@@ -531,6 +531,20 @@ export const decisionSettingsSchema = z.object({
 });
 export type DecisionSettings = z.infer<typeof decisionSettingsSchema>;
 
+/** The agent as a supervisor: it can start helper agents, write their instructions and share a memory with them. */
+export const teamSettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  // Helper agents one conversation may have at once (the supervisor not counted).
+  maxAgents: z.number().int().min(1).max(5).default(5),
+  // Steps (model calls) each helper may take before it must report.
+  workerSteps: z.number().int().min(2).max(30).default(10),
+  // Which model helpers use unless the supervisor picks one.
+  workerModel: z.enum(["main", "fast"]).default("fast"),
+  // Keep the instructions that worked as playbooks and improve them with each use.
+  evolve: z.boolean().default(true),
+});
+export type TeamSettings = z.infer<typeof teamSettingsSchema>;
+
 export const aiSettingsSchema = z.object({
   // Single-provider fields from older versions. Saving them updates the provider called "default".
   baseUrl: z.string().trim().max(500).default(""),
@@ -560,6 +574,7 @@ export const aiSettingsSchema = z.object({
   // Reuse the answer to an identical request for this many hours (extraction, selectors). 0 = off.
   cacheHours: z.number().int().min(0).max(720).default(0),
   decisions: decisionSettingsSchema.default(decisionSettingsSchema.parse({})),
+  team: teamSettingsSchema.default(teamSettingsSchema.parse({})),
 });
 
 export const scrapingSettingsSchema = z.object({

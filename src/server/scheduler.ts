@@ -10,6 +10,7 @@ import { briefingOptions, buildBriefing } from "./ops/briefing";
 import { pruneDeliveries } from "./repo/deliveries";
 import { listBackups } from "./ops/backup";
 import { failStaleAgentRuns } from "./repo/agent";
+import { failStaleWorkers } from "./repo/team";
 import { claimDueDealSearches } from "./repo/deal-searches";
 import { audit, pruneEvents } from "./repo/events";
 import { clearAiCache, deleteAiCalls } from "./repo/ai";
@@ -130,6 +131,7 @@ async function tick() {
 export function startScheduler() {
   if (state.timer) return;
   failStaleAgentRuns();
+  failStaleWorkers();
   state.started = new Date().toISOString();
   state.timer = setInterval(() => void tick(), TICK_MS);
   state.timer.unref?.();

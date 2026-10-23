@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp, Bot, Brain, Check, CircleDollarSign, Gauge, KeyRound, ListPlus, Pencil, Plus, Power, Route, Save, Scale, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Brain, Check, CircleDollarSign, Gauge, KeyRound, ListPlus, Pencil, Plus, Power, Route, Save, Scale, ShieldCheck, Trash2, Users, X } from "lucide-react";
 import type { AiModel, AiProvider, DecisionSettings, ModelRef } from "@/lib/schemas";
 import type { MemoryNote } from "@/server/repo/ai";
 import { BarChart } from "@/components/charts";
@@ -394,6 +394,18 @@ export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved:
       </Panel>
 
       <DecisionsPanel value={v.decisions} providers={providers} onChange={(d) => s.set({ decisions: { ...v.decisions, ...d } })} saveBtn={saveBtn} />
+
+      <Panel title="Agent team" icon={<Users className="size-4 text-muted" />}
+        description="The agent can act as a supervisor: for bigger jobs it starts helper agents, writes their instructions, examples and decision questions, shares a memory with them and combines their reports. Helpers can only read; changes still go through the agent and your approvals."
+        footer={saveBtn}>
+        <Switch label="Let the agent start helper agents" description="Off: the agent does everything itself." checked={v.team.enabled} onChange={(x) => s.set({ team: { ...v.team, enabled: x } })} />
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Helpers at once">{(f) => <Select {...f} value={v.team.maxAgents} onChange={(e) => s.set({ team: { ...v.team, maxAgents: Number(e.target.value) } })}>{[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</Select>}</Field>
+          <Field label="Steps per helper" hint="Model calls before it must report.">{(f) => <Input {...f} type="number" min={2} max={30} value={v.team.workerSteps} onChange={(e) => s.set({ team: { ...v.team, workerSteps: Math.min(30, Math.max(2, Number(e.target.value) || 2)) } })} />}</Field>
+          <Field label="Helper model" hint="The supervisor can pick another per helper.">{(f) => <Select {...f} value={v.team.workerModel} onChange={(e) => s.set({ team: { ...v.team, workerModel: e.target.value as "main" | "fast" } })}><option value="fast">Fast model</option><option value="main">Main model</option></Select>}</Field>
+        </div>
+        <Switch label="Learn playbooks" description="The supervisor saves helper instructions that worked, rates them after each use and improves them. See them under Agent → Playbooks." checked={v.team.evolve} onChange={(x) => s.set({ team: { ...v.team, evolve: x } })} />
+      </Panel>
 
       <Panel title="How the AI works" icon={<Gauge className="size-4 text-muted" />} description="Defaults for every AI call. Page text is sized to each model's context window when you set it." footer={saveBtn}>
         <div className="grid gap-4 md:grid-cols-4">
