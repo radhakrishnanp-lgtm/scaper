@@ -34,13 +34,51 @@ function ScrapingTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void })
         <Field label="Browser pages at once">{(p) => <Select {...p} value={v.maxConcurrency} onChange={(e) => s.set({ maxConcurrency: Number(e.target.value) })}>{[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}</Select>}</Field>
       </div>
       <Field label="User agent" hint="Empty = Scaper's honest default. Adding your contact details is good manners for heavy use.">{(p) => <Input {...p} value={v.userAgent} onChange={(e) => s.set({ userAgent: e.target.value })} placeholder="Scaper/2 (personal; me@example.com)" />}</Field>
-      <Field label="Your proxy (optional)" hint="One proxy you control, e.g. to reach a site from your office network. Not a rotation pool." error={s.errors.proxyUrl}>{(p) => <Input {...p} className="font-mono text-xs" value={v.proxyUrl} onChange={(e) => s.set({ proxyUrl: e.target.value })} placeholder="http://user:pass@proxy.local:8080" />}</Field>
+      <NetworkSection value={v.proxyUrl} proxyAi={v.proxyAi} error={s.errors.proxyUrl} onChange={(x) => s.set(x)} />
       <div className="space-y-3">
         <Switch label="Respect robots.txt" description="Recommended. Override per site on the Sites page for sites you own." checked={v.respectRobots} onChange={(x) => s.set({ respectRobots: x })} />
         <Switch label="Skip images, fonts and video in Browser mode" description="Faster and lighter. Screenshots still load images." checked={v.blockHeavyResources} onChange={(x) => s.set({ blockHeavyResources: x })} />
         <Switch label="Allow private network addresses" description="Lets tasks reach 192.168.x.x, localhost and similar. Leave off unless you scrape your own devices." checked={v.allowPrivateNetwork} onChange={(x) => s.set({ allowPrivateNetwork: x })} />
       </div>
     </Panel>
+  );
+}
+
+type NetTest = { ok: boolean; status: number | null; ms: number; route: string; aiRoute: string; finalUrl?: string; error?: string };
+const ROUTE: Record<string, string> = { direct: "Direct (your system network, including a VPN if it is on)", "http-proxy": "Your HTTP proxy", socks5: "Your SOCKS5 proxy", "env-proxy": "The HTTPS_PROXY variable" };
+
+/** Where Scaper's traffic goes: straight out (a system VPN covers that), or through one proxy you control. */
+function NetworkSection({ value, proxyAi, error, onChange }: { value: string; proxyAi: boolean; error?: string; onChange: (x: { proxyUrl?: string; proxyAi?: boolean }) => void }) {
+  const toast = useToast();
+  const [url, setUrl] = useState("https://example.com/");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<NetTest | null>(null);
+  const test = async () => {
+    setBusy(true); setRes(null);
+    try { setRes(await api<NetTest>("/api/settings/network-test", { body: { url } })); }
+    catch (e) { toast.error("Test failed", errorText(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-3 rounded-xl border border-border p-4">
+      <div>
+        <p className="text-sm font-medium">Network and VPN</p>
+        <p className="mt-0.5 text-xs text-muted">A VPN that runs on this computer already covers Scaper; nothing to set. If your VPN app offers a local proxy (often SOCKS5 on 127.0.0.1) or you use an office proxy, enter it here. Scaper still identifies itself, follows robots.txt and keeps its delays either way. Save before testing.</p>
+      </div>
+      <Field label="Proxy (optional)" hint="http://, https:// or socks5://. Browser mode cannot use a SOCKS5 proxy that needs a password." error={error}>
+        {(p) => <Input {...p} className="font-mono text-xs" value={value} onChange={(e) => onChange({ proxyUrl: e.target.value })} placeholder="socks5://127.0.0.1:1080 or http://user:pass@proxy.local:8080" />}
+      </Field>
+      <Switch label="Send AI requests through it too" description="Off: AI calls go direct (or via HTTPS_PROXY), so a slow proxy does not slow the AI down." checked={proxyAi} onChange={(x) => onChange({ proxyAi: x })} />
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-0 flex-1"><Field label="Test with this page">{(p) => <Input {...p} value={url} onChange={(e) => setUrl(e.target.value)} />}</Field></div>
+        <Button variant="secondary" loading={busy} onClick={() => void test()}>Test connection</Button>
+      </div>
+      {res && (
+        <Callout tone={res.ok ? "success" : "danger"} title={res.ok ? `Loaded in ${res.ms} ms (HTTP ${res.status})` : "Could not load the page"}>
+          Route: {ROUTE[res.route] ?? res.route}. AI requests: {ROUTE[res.aiRoute] ?? res.aiRoute}.{res.error ? ` ${res.error}` : ""}
+        </Callout>
+      )}
+    </div>
   );
 }
 

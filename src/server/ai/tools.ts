@@ -30,7 +30,8 @@ import { getSettings } from "../repo/settings";
 import type { AgentBrowser } from "./browser-session";
 import { type ModelChoice, type ToolDef } from "./client";
 import { buildPageContext, linkLines } from "./context";
-import { planCategoryScrape } from "./crawl";
+import { candidateLinks, planCategoryScrape } from "./crawl";
+import { checkScrape, scoreLinks } from "./judge";
 import { aiExtract } from "./extract";
 import { suggestSelectors } from "./suggest";
 
@@ -185,6 +186,30 @@ export const TOOLS: Record<string, AgentTool> = {
         extract: plan.sample.count ? { type: "selectors", itemSelector: plan.sample.itemSelector, fields: plan.sample.fields } : { type: "ai", instruction: plan.goal, fields: [] },
         pagination: plan.pagination, sample_rows: plan.sample.rows.slice(0, 5), matched_on_first_category: plan.sample.count, notes: plan.notes,
       });
+    },
+  },
+
+  check_scrape: {
+    group: "Read the web", changes: false,
+    def: def("check_scrape", "Check whether a page is OK to scrape before you build anything on it: robots.txt, login or checkout pages, personal data, members-only content, and (with a goal) whether it has what the user wants. Returns ok, caution or stop with reasons. Respect a stop.", {
+      url: str("Absolute URL"), goal: str("Optional: what the user wants from it"),
+    }, ["url"]),
+    run: async (a, ctx) => {
+      const c = await checkScrape({ url: urlArg(a), goal: a.goal ? String(a.goal).slice(0, 300) : undefined, signal: ctx.signal });
+      return j({ outcome: c.outcome, findings: c.findings.map((f) => `${f.level} (${f.source}): ${f.text}`), page_kind: c.kind?.label ?? null, data: c.richness?.label ?? null, title: c.title });
+    },
+  },
+  pick_links: {
+    group: "Read the web", changes: false,
+    def: def("pick_links", "Score every same-site link on a page for how likely it leads to what the user wants (categories, listings, search pages), using the decision model. Returns the best links with probabilities.", {
+      url: str("Absolute URL, usually a home or menu page"), goal: str("What to find, e.g. 'laptops'"), max: num("How many to return, default 20"),
+    }, ["url", "goal"]),
+    run: async (a, ctx) => {
+      const page = await fetchPage(urlArg(a), "fast", { signal: ctx.signal });
+      const links = candidateLinks(page.html, page.finalUrl);
+      if (!links.length) return j({ links: [], note: "No same-site links on that page." });
+      const r = await scoreLinks({ goal: String(a.goal ?? "").slice(0, 300), pageUrl: page.finalUrl, pageTitle: page.title, links, signal: ctx.signal });
+      return j({ links: r.links.slice(0, Math.min(60, Math.max(1, Number(a.max ?? 20)))).map((l) => ({ text: l.text, url: l.href, p: Math.round(l.p * 100) / 100 })) });
     },
   },
 

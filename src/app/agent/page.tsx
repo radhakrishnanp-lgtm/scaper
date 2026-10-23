@@ -90,6 +90,8 @@ function StatusIcon({ status }: { status: AgentRun["status"] }) {
   return <XCircle className="size-4 text-danger" aria-label="Failed" />;
 }
 
+const sig = (p: number | null) => (p === null ? "–" : `${Math.round(p * 100)}%`);
+
 /** "The agent wants to …": shown while a change waits for your OK. */
 function ApprovalCard({ run, onAnswered }: { run: AgentRun; onAnswered: () => void }) {
   const toast = useToast();
@@ -108,6 +110,17 @@ function ApprovalCard({ run, onAnswered }: { run: AgentRun; onAnswered: () => vo
         <dl className="mt-2 grid gap-x-3 gap-y-0.5 font-mono text-xs sm:grid-cols-[auto_1fr]">
           {args.slice(0, 12).map(([k, v]) => <div key={k} className="contents"><dt className="text-muted">{k}</dt><dd className="break-all">{typeof v === "string" ? v : JSON.stringify(v)}</dd></div>)}
         </dl>
+      )}
+      {p.risk && (p.risk.reasons.length > 0 || p.risk.signals) && (
+        <div className="mt-3 rounded-lg border border-border bg-surface/70 p-3">
+          <p className="text-xs font-medium">{p.risk.reasons.length ? "Why Scaper asks" : "Safety check"}</p>
+          {p.risk.reasons.length > 0 && <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs">{p.risk.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
+          {p.risk.signals && (
+            <p className="mt-1.5 text-xs text-muted">
+              Decision model: matches your request {sig(p.risk.signals.matchesRequest)} · narrow scope {sig(p.risk.signals.narrowScope)} · easy to undo {sig(p.risk.signals.reversible)} · ambiguous {sig(p.risk.signals.ambiguous)} · needs a person {sig(p.risk.signals.needsReview)}
+            </p>
+          )}
+        </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" icon={<Check className="size-4" />} loading={busy === "allow"} disabled={Boolean(busy)} onClick={() => void answer("allow")}>Allow</Button>

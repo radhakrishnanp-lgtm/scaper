@@ -508,6 +508,29 @@ export type AiProvider = z.infer<typeof aiProviderSchema>;
 export const modelRefSchema = z.object({ providerId: z.string().trim().max(40).default(""), model: z.string().trim().max(200).default("") });
 export type ModelRef = z.infer<typeof modelRefSchema>;
 
+/**
+ * A decision model (OpenRouter Decisions API): reads a page or a proposed action and answers typed questions with
+ * probabilities. Scaper uses it to pick which links hold what you want, to check a page before scraping it and to
+ * double-check the agent's actions. Code applies the thresholds; the model never decides alone.
+ */
+export const decisionSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  // Which saved provider's key to use (OpenRouter). The endpoint is derived from its base URL unless set below.
+  providerId: z.string().trim().max(40).default(""),
+  model: z.string().trim().max(200).default("openai/gpt-6-luna-decisions"),
+  // Empty = <provider base without /v1>/alpha/decisions, e.g. https://openrouter.ai/api/alpha/decisions.
+  url: z.string().trim().max(500).regex(/^(https?:\/\/\S+)?$/i, "Start with http:// or https://").default(""),
+  // US dollars per million input tokens, for cost tracking when the provider does not report cost.
+  inputPrice: z.number().min(0).max(10_000).default(0.1),
+  pickLinks: z.boolean().default(true),
+  scrapeCheck: z.boolean().default(true),
+  agentGuard: z.boolean().default(true),
+  // How sure the model must be (0.5 = more likely than not) before a link counts as a match or a risk is flagged.
+  linkThreshold: z.number().min(0.05).max(0.99).default(0.5),
+  riskThreshold: z.number().min(0.05).max(0.99).default(0.5),
+});
+export type DecisionSettings = z.infer<typeof decisionSettingsSchema>;
+
 export const aiSettingsSchema = z.object({
   // Single-provider fields from older versions. Saving them updates the provider called "default".
   baseUrl: z.string().trim().max(500).default(""),
@@ -536,13 +559,17 @@ export const aiSettingsSchema = z.object({
   keepCallsDays: z.number().int().min(1).max(365).default(60),
   // Reuse the answer to an identical request for this many hours (extraction, selectors). 0 = off.
   cacheHours: z.number().int().min(0).max(720).default(0),
+  decisions: decisionSettingsSchema.default(decisionSettingsSchema.parse({})),
 });
 
 export const scrapingSettingsSchema = z.object({
   userAgent: z.string().trim().max(400).default(""),
   minDelaySeconds: z.number().min(1).max(600).default(5),
   respectRobots: z.boolean().default(true),
-  proxyUrl: z.string().trim().max(500).default(""),
+  // One proxy you control: an office proxy or the local HTTP/SOCKS5 proxy of your VPN app.
+  proxyUrl: z.string().trim().max(500).regex(/^((https?|socks5h?):\/\/\S+)?$/i, "Use http://, https:// or socks5://").default(""),
+  // Send AI requests through the proxy too (otherwise they go direct, or via HTTPS_PROXY).
+  proxyAi: z.boolean().default(false),
   maxConcurrency: z.number().int().min(1).max(4).default(2),
   jobConcurrency: z.number().int().min(1).max(8).default(3),
   blockHeavyResources: z.boolean().default(true),

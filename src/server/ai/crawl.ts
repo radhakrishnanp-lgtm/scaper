@@ -6,7 +6,9 @@ import type { Cell } from "@/lib/types";
 import { absolutize, clean, load, type $ } from "../extract/dom";
 import { fetchPage } from "../fetcher";
 import { chat, parseJsonReply, AiError, type ModelChoice } from "./client";
-import { collectLinks, linkLines, type LinkRef } from "./context";
+import { buildPageContext, collectLinks, linkLines, type LinkRef } from "./context";
+import { decisionsTarget } from "./decisions";
+import { scoreLinks } from "./judge";
 import { UNTRUSTED_NOTE } from "./extract";
 import { suggestSelectors } from "./suggest";
 
@@ -21,12 +23,15 @@ export type CrawlPlan = {
   title: string;
   goal: string;
   mode: FetchMode;
-  categories: { name: string; url: string; picked: boolean }[];
+  /** p: how likely the decision model thinks the link holds what you asked for (when it picked them). */
+  categories: { name: string; url: string; picked: boolean; p?: number }[];
   sample: { url: string; itemSelector: string; fields: { name: string; selector: string; attr: string }[]; rows: Record<string, Cell>[]; count: number; note: string | null };
   pagination: Pagination;
   /** Other menu links from the start page, to add categories the AI skipped. */
-  otherLinks: { name: string; url: string }[];
+  otherLinks: { name: string; url: string; p?: number }[];
   notes: string[];
+  /** Who chose the categories: the decision model (with probabilities) or the chat model. */
+  pickedBy: "decisions" | "chat" | "none";
 };
 
 const SKIP_PATH = /\/(log-?in|sign-?in|sign-?up|register|account|my-?account|cart|basket|checkout|wishlist|help|support|contact|privacy|terms|legal|cookies?|careers?|jobs|press|about|faq|returns?|shipping|policy|policies|track-?order)(\/|$|\?)/i;
@@ -95,10 +100,35 @@ export async function planCategoryScrape(input: PlanInput): Promise<CrawlPlan> {
   const notes: string[] = [];
   const start = await fetchPage(input.url, input.mode, { signal: input.signal });
   const links = candidateLinks(start.html, start.finalUrl);
-  let picks: { name: string; url: string }[] = [];
+  let picks: { name: string; url: string; p?: number }[] = [];
   let startIsListing = false;
+  let pickedBy: CrawlPlan["pickedBy"] = "none";
+  const scores = new Map<string, number>();
 
-  if (links.length) {
+  // The decision model scores every link at once; the chat model is the fallback when it is off or fails.
+  const d = decisionsTarget();
+  if (links.length && d?.settings.pickLinks) {
+    try {
+      const excerpt = buildPageContext(start.html, start.finalUrl, { budgetTokens: 1500 }).markdown;
+      const r = await scoreLinks({ goal: input.goal, pageUrl: start.finalUrl, pageTitle: start.title, links, excerpt, signal: input.signal });
+      for (const l of r.links) scores.set(l.href, l.p);
+      startIsListing = (r.startIsListing ?? 0) >= d.settings.linkThreshold;
+      const seen = new Set<string>();
+      for (const l of r.links) {
+        if (l.p < d.settings.linkThreshold || seen.has(l.href)) continue;
+        seen.add(l.href);
+        picks.push({ name: l.text.slice(0, 120), url: l.href, p: l.p });
+        if (picks.length >= input.maxCategories) break;
+      }
+      pickedBy = "decisions";
+      notes.push(`The decision model scored ${r.links.length} links and picked ${picks.length} at ${Math.round(d.settings.linkThreshold * 100)}% or more.`);
+    } catch (e) {
+      notes.push(`The decision model could not score the links (${(e as Error).message}); your chat model picked them instead.`);
+    }
+  }
+
+  if (links.length && pickedBy === "none") {
+    pickedBy = "chat";
     const res = await chat([
       {
         role: "system",
@@ -118,7 +148,7 @@ export async function planCategoryScrape(input: PlanInput): Promise<CrawlPlan> {
       if (picks.length >= input.maxCategories) break;
     }
     if (reply.note) notes.push(`AI: ${reply.note}`);
-  } else {
+  } else if (!links.length) {
     notes.push("The start page has no links to other pages of this site, so Scaper reads the start page itself.");
     startIsListing = true;
   }
@@ -149,9 +179,10 @@ export async function planCategoryScrape(input: PlanInput): Promise<CrawlPlan> {
     goal: input.goal,
     mode: input.mode,
     categories: picks.map((p) => ({ ...p, picked: true })),
+    pickedBy,
     sample,
     pagination: input.pagesPerCategory > 1 ? pg.pagination : { type: "none" },
-    otherLinks: moreCategoryLinks(start.html, start.finalUrl, picks.map((p) => p.url)),
+    otherLinks: moreCategoryLinks(start.html, start.finalUrl, picks.map((p) => p.url)).map((l): { name: string; url: string; p?: number } => (scores.has(l.url) ? { ...l, p: scores.get(l.url) } : l)).sort((a, b) => (b.p ?? -1) - (a.p ?? -1)),
     notes,
   };
 }

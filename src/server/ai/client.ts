@@ -10,6 +10,12 @@ import { addAiUsage, aiCostThisMonth, aiUsageToday } from "../repo/agent";
 import { cachedAiResponse, recordAiCall, storeAiResponse } from "../repo/ai";
 import { getSettings } from "../repo/settings";
 
+/** AI requests go direct (or via HTTPS_PROXY) unless "Send AI requests through the proxy" is on. */
+export function aiDispatcher() {
+  const s = getSettings().scraping;
+  return dispatcherFor(s.proxyAi ? s.proxyUrl : "");
+}
+
 export class AiError extends Error {
   constructor(public code: "not_configured" | "quota" | "upstream" | "timeout" | "bad_output", message: string) {
     super(message);
@@ -134,7 +140,7 @@ export async function callModel(r: ResolvedModel, messages: ChatMessage[], opts:
     try {
       res = await undiciFetch(endpointUrl(r.provider.baseUrl, "chat/completions"), {
         method: "POST",
-        dispatcher: dispatcherFor(""),
+        dispatcher: aiDispatcher(),
         signal,
         headers: { "content-type": "application/json", ...providerHeaders(r.provider) },
         body: JSON.stringify(body),
@@ -298,7 +304,7 @@ const modelListSchema = z.object({
 export async function listProviderModels(p: AiProvider): Promise<AiModel[]> {
   let res;
   try {
-    res = await undiciFetch(endpointUrl(p.baseUrl, "models"), { dispatcher: dispatcherFor(""), signal: AbortSignal.timeout(20_000), headers: providerHeaders(p) });
+    res = await undiciFetch(endpointUrl(p.baseUrl, "models"), { dispatcher: aiDispatcher(), signal: AbortSignal.timeout(20_000), headers: providerHeaders(p) });
   } catch (e) {
     throw new AiError("upstream", `Could not reach ${p.name}: ${((e as Error).cause as Error | undefined)?.message ?? (e as Error).message}`);
   }

@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp, Bot, Brain, Check, CircleDollarSign, Gauge, KeyRound, ListPlus, Pencil, Plus, Power, Route, Save, ShieldCheck, Trash2, X } from "lucide-react";
-import type { AiModel, AiProvider, ModelRef } from "@/lib/schemas";
+import { ArrowDown, ArrowUp, Bot, Brain, Check, CircleDollarSign, Gauge, KeyRound, ListPlus, Pencil, Plus, Power, Route, Save, Scale, ShieldCheck, Trash2, X } from "lucide-react";
+import type { AiModel, AiProvider, DecisionSettings, ModelRef } from "@/lib/schemas";
 import type { MemoryNote } from "@/server/repo/ai";
 import { BarChart } from "@/components/charts";
 import { ConfirmDialog, Dialog } from "@/components/dialog";
@@ -393,6 +393,8 @@ export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved:
         )}
       </Panel>
 
+      <DecisionsPanel value={v.decisions} providers={providers} onChange={(d) => s.set({ decisions: { ...v.decisions, ...d } })} saveBtn={saveBtn} />
+
       <Panel title="How the AI works" icon={<Gauge className="size-4 text-muted" />} description="Defaults for every AI call. Page text is sized to each model's context window when you set it." footer={saveBtn}>
         <div className="grid gap-4 md:grid-cols-4">
           <Field label="Temperature" hint="0 = exact, higher = more creative.">{(f) => <Input {...f} type="number" min={0} max={2} step={0.1} value={v.temperature} onChange={(e) => s.set({ temperature: Math.min(2, Math.max(0, Number(e.target.value) || 0)) })} />}</Field>
@@ -404,7 +406,7 @@ export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved:
           <div>
             <p className="mb-1.5 text-sm font-medium">When the agent wants to change something</p>
             <Segmented label="Agent approvals" value={v.agentApproval} onChange={(x) => s.set({ agentApproval: x })} options={[{ value: "ask", label: "Ask me first" }, { value: "auto", label: "Go ahead" }]} />
-            <p className="mt-1.5 text-xs text-muted">Saving tasks, watchers, tracked products, deleting things and sending alerts.</p>
+            <p className="mt-1.5 text-xs text-muted">Saving tasks, watchers, tracked products, deleting things and sending alerts. Deleting always asks, even in <p className="mt-1.5 text-xs text-muted">Saving tasks, watchers, tracked products, deleting things and sending alerts.</p>quot;Go ahead<p className="mt-1.5 text-xs text-muted">Saving tasks, watchers, tracked products, deleting things and sending alerts.</p>quot;.</p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Reuse identical answers (hours)" hint="0 = off. Saves tokens on re-runs.">{(f) => <Input {...f} type="number" min={0} max={720} value={v.cacheHours} onChange={(e) => s.set({ cacheHours: Number(e.target.value) || 0 })} />}</Field>
@@ -470,4 +472,72 @@ export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved:
         onConfirm={() => deleting && void remove(deleting)} />
     </div>
   );
+}
+
+type DecisionTest = { model: string; provider: string | null; latencyMs: number; cost: number; urgent: number | null; team: string | null };
+
+/** The decision model: which provider's key, which model, and what Scaper uses it for. */
+function DecisionsPanel({ value: d, providers, onChange, saveBtn }: { value: DecisionSettings; providers: PubProvider[]; onChange: (d: Partial<DecisionSettings>) => void; saveBtn: React.ReactNode }) {
+  const toast = useToast();
+  const [testing, setTesting] = useState(false);
+  const [test, setTest] = useState<DecisionTest | null>(null);
+  const provider = providers.find((p) => p.id === d.providerId) ?? providers.find((p) => /openrouter\.ai/i.test(p.baseUrl));
+  const endpoint = d.url || (provider ? decisionsEndpoint(provider.baseUrl) : "");
+  const runTest = async () => {
+    setTesting(true); setTest(null);
+    try { setTest(await api<DecisionTest>("/api/decisions/test", { method: "POST" })); }
+    catch (e) { toast.error("The decision model did not answer", errorText(e)); }
+    finally { setTesting(false); }
+  };
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  return (
+    <Panel title="Decision model" icon={<Scale className="size-4 text-muted" />}
+      description={<>A model that answers yes/no, pick-one and rating questions with probabilities, such as OpenRouter&apos;s decisions models. Scaper uses it to choose which links hold what you want, to check a page before scraping it, and to double-check the agent. Hard rules always come first; it can only make Scaper more careful. <Link prefetch={false} href="/decisions" className="text-accent hover:underline">Open Decisions</Link></>}
+      footer={<><Button size="sm" variant="secondary" loading={testing} disabled={!provider || !d.model} onClick={() => void runTest()}>Test it</Button>{saveBtn}</>}>
+      <Switch label="Use a decision model" description="Off: link picking uses your chat model, scrape checks use only the rules, and the agent asks before deleting." checked={d.enabled} onChange={(x) => onChange({ enabled: x })} />
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Provider (its key is used)" hint={!providers.some((p) => /openrouter\.ai/i.test(p.baseUrl)) ? "Add OpenRouter under Your AI providers first (choose the OpenRouter preset)." : undefined}>
+          {(f) => (
+            <Select {...f} value={d.providerId || provider?.id || ""} onChange={(e) => onChange({ providerId: e.target.value })}>
+              <option value="">Choose…</option>
+              {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </Select>
+          )}
+        </Field>
+        <Field label="Model" hint="From OpenRouter's decisions models.">{(f) => <Input {...f} className="font-mono text-xs" value={d.model} onChange={(e) => onChange({ model: e.target.value })} placeholder="openai/gpt-6-luna-decisions" />}</Field>
+        <Field label="Endpoint" hint={d.url ? "Custom endpoint." : "Worked out from the provider's base URL. Set it only if yours differs."}>
+          {(f) => <Input {...f} className="font-mono text-xs" value={d.url} onChange={(e) => onChange({ url: e.target.value })} placeholder={endpoint || "https://openrouter.ai/api/alpha/decisions"} />}
+        </Field>
+        <Field label="Price per million input tokens (US$)" hint="Used only when the provider does not report the cost.">{(f) => <Input {...f} type="number" min={0} step={0.01} value={d.inputPrice} onChange={(e) => onChange({ inputPrice: Math.max(0, Number(e.target.value) || 0) })} />}</Field>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <Checkbox label="Pick links for category scrapes" checked={d.pickLinks} onChange={(x) => onChange({ pickLinks: x })} />
+        <Checkbox label="Check pages before scraping" checked={d.scrapeCheck} onChange={(x) => onChange({ scrapeCheck: x })} />
+        <Checkbox label="Double-check the agent's changes" checked={d.agentGuard} onChange={(x) => onChange({ agentGuard: x })} />
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label={`A link counts as a match from ${pct(d.linkThreshold)}`} hint="Lower finds more categories; higher picks only clear ones.">
+          {(f) => <input {...f} type="range" min={0.2} max={0.95} step={0.05} value={d.linkThreshold} onChange={(e) => onChange({ linkThreshold: Number(e.target.value) })} className="w-full accent-[var(--accent)]" />}
+        </Field>
+        <Field label={`A risk is flagged from ${pct(d.riskThreshold)}`} hint="Lower is more careful: more cautions and more questions from the agent.">
+          {(f) => <input {...f} type="range" min={0.2} max={0.95} step={0.05} value={d.riskThreshold} onChange={(e) => onChange({ riskThreshold: Number(e.target.value) })} className="w-full accent-[var(--accent)]" />}
+        </Field>
+      </div>
+      {test && (
+        <Callout tone="success" icon={<Check className="size-4" />} title={`It works: ${test.model}${test.provider ? ` via ${test.provider}` : ""}`}>
+          Asked about a sample support message: urgent {test.urgent === null ? "not answered" : pct(test.urgent)}, team &quot;{test.team ?? "not answered"}&quot;. {(test.latencyMs / 1000).toFixed(2)}s, {money(test.cost)}.
+        </Callout>
+      )}
+    </Panel>
+  );
+}
+
+/** Mirrors the server: OpenRouter's …/api/v1 becomes …/api/alpha/decisions. */
+function decisionsEndpoint(baseUrl: string) {
+  try {
+    const u = new URL(baseUrl);
+    u.pathname = `${u.pathname.replace(/\/+$/, "").replace(/\/(chat\/completions|models)$/, "").replace(/\/v1$/, "")}/alpha/decisions`;
+    u.search = "";
+    return u.toString();
+  } catch { return ""; }
 }

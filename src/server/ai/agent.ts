@@ -2,6 +2,8 @@ import "server-only";
 import { z } from "zod";
 import { bus } from "../bus";
 import { withWork } from "../privacy";
+import { DESTRUCTIVE_TOOL } from "@/lib/decision-policy";
+import { guardAction } from "./judge";
 import { agentThread, createAgentRun, getAgentRun, updateAgentRun, type AgentRun, type AgentStep, type PendingApproval } from "../repo/agent";
 import { listDealSearches } from "../repo/deal-searches";
 import { audit } from "../repo/events";
@@ -144,6 +146,7 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
     if (!stopped()) bus.emit({ type: "agent", id, status: patch.status ?? "running" });
   };
   const budget = Math.max(6000, contextBudget(choice) + 4000);
+  const request = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
   try {
     for (let step = 0; step < maxSteps && !stopped(); step++) {
       const last = step === maxSteps - 1;
@@ -170,8 +173,12 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
           args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
           if (!tool) throw new Error(`Unknown tool ${call.function.name}.`);
           if (tool.changes) {
-            if (approval === "ask" && !state.allowAll.has(id)) {
-              const pending: PendingApproval = { callId: call.id, tool: call.function.name, args, summary: tool.describe?.(args) ?? `${call.function.name}(${JSON.stringify(args).slice(0, 200)})`, askedAt: new Date().toISOString() };
+            const summary = tool.describe?.(args) ?? `${call.function.name}(${JSON.stringify(args).slice(0, 200)})`;
+            // The guardrail can only add a reason to ask: deleting always asks, and the decision model may flag more.
+            const guard = await guardAction({ request, tool: call.function.name, summary, args, destructive: DESTRUCTIVE_TOOL.test(call.function.name), signal: ctrl.signal, refId: id });
+            const mustAsk = approval === "ask" ? !state.allowAll.has(id) : guard.ask;
+            if (mustAsk) {
+              const pending: PendingApproval = { callId: call.id, tool: call.function.name, args, summary, askedAt: new Date().toISOString(), risk: guard.reasons.length || guard.signals ? { reasons: guard.reasons, signals: guard.signals, error: guard.error } : undefined };
               save({ pending });
               const decision = await new Promise<Decision>((resolve) => {
                 state.waiting.set(id, resolve);

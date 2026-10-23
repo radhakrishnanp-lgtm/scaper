@@ -28,6 +28,7 @@ type Status = "all" | "ok" | "error" | "cached";
 const PURPOSES: Record<string, string> = {
   agent: "Agent", extract: "AI extraction", fields: "Field suggestions", columns: "AI columns", selectors: "Selector suggestions", plan: "Category planning",
   heal: "Fix with AI", watcher: "Watcher triage", deals: "Deal ranking", test: "Tests", chat: "Other", briefing: "Briefings", rules: "Data check suggestions",
+  "decide:scrape-check": "Decision: OK to scrape?", "decide:links": "Decision: which links", "decide:agent-guard": "Decision: agent guardrail", "decide:playground": "Decision playground", "decide:test": "Decision test",
 };
 const money = (v: number) => (v >= 1 ? `$${v.toFixed(2)}` : v > 0 ? `$${v.toFixed(4)}` : "$0");
 const tokens = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : n.toLocaleString("en-IN"));
@@ -139,7 +140,7 @@ function AiLogPage() {
         <Stat label="Calls (30 days)" value={t ? t.calls.toLocaleString("en-IN") : "–"} hint={t?.cached ? `${t.cached} reused from cache` : undefined} />
         <Stat label="Tokens" value={t ? tokens(t.tokens_in + t.tokens_out) : "–"} hint={t ? `${tokens(t.tokens_in)} in · ${tokens(t.tokens_out)} out` : undefined} />
         <Stat label="Cost" value={t ? money(t.cost) : "–"} hint="From the prices on your models" />
-        <Stat label="Average time" value={t?.avg_ms ? duration(t.avg_ms) : "–"} />
+        <Stat label="Average time" value={t?.avg_ms ? duration(Math.round(t.avg_ms)) : "–"} />
         <Stat label="Errors" value={t ? t.errors : "–"} hint={t?.fallbacks ? `${t.fallbacks} saved by a fallback` : undefined} />
       </div>
       <Card>

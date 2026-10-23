@@ -1,5 +1,5 @@
 import "server-only";
-import { EnvHttpProxyAgent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
+import { EnvHttpProxyAgent, ProxyAgent, Socks5ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { FetchError } from "./errors";
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -8,11 +8,15 @@ const MAX_REDIRECTS = 5;
 const g = globalThis as unknown as { __scaperDispatchers?: Map<string, Dispatcher> };
 const dispatchers = (g.__scaperDispatchers ??= new Map());
 
-/** A user-set proxy wins; otherwise standard HTTPS_PROXY / NO_PROXY variables are honoured. */
+/**
+ * A user-set proxy wins (HTTP(S), or SOCKS5 such as a VPN app's local proxy); otherwise standard
+ * HTTPS_PROXY / NO_PROXY variables are honoured.
+ */
 export function dispatcherFor(proxyUrl: string): Dispatcher | undefined {
   const key = proxyUrl || "env";
   if (!dispatchers.has(key)) {
-    if (proxyUrl) dispatchers.set(key, new ProxyAgent(proxyUrl));
+    if (/^socks5h?:/i.test(proxyUrl)) dispatchers.set(key, new Socks5ProxyAgent(proxyUrl.replace(/^socks5h:/i, "socks5:")));
+    else if (proxyUrl) dispatchers.set(key, new ProxyAgent(proxyUrl));
     else if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY) dispatchers.set(key, new EnvHttpProxyAgent());
     else return undefined;
   }

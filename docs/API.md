@@ -62,6 +62,17 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | POST `/api/briefing` · GET `/api/briefing/export?days&tags&ai=1&format=md` | Preview or send a briefing `{days, tags?, match?, ai?, send}` · download it as HTML or Markdown | AI: 6/min |
 | GET/POST `/api/views?scope=` · DELETE `/api/views/:id` | Saved table views (columns, widths, pins, filters, sort) per dataset | – |
 
+### Decisions
+
+| Method & path | Purpose | Rate limit |
+|---|---|---|
+| GET `/api/decisions` | Decision model status: on/off, model, provider, endpoint, what it is used for, thresholds | – |
+| POST `/api/decisions` | Playground: `{state, questions, threshold}` → the model's answers plus Scaper's reading at the threshold (`clear` / `needs_review`). Questions use OpenRouter's shapes: `noul` (optional `criteria: {true, false}`), `choice` (`criteria: {option: text\|null}`), `score` (`criteria: [levels, lowest first]`); up to 200 | 20/min |
+| POST `/api/decisions/check` | "OK to scrape?" `{url, goal?, mode?}` → `outcome: ok\|caution\|stop`, findings (each from a `rule` or the `ai`), page kind, data richness | 12/min |
+| POST `/api/decisions/links` | "What to scrape" `{url, goal}` → every same-site link with the probability it leads to what you want | 10/min |
+| POST `/api/decisions/test` | One small decision to prove the key, endpoint and model | 6/min |
+| POST `/api/settings/network-test` | Load `{url}` through the saved route (proxy, HTTPS_PROXY or direct) and report status, time and route | 10/min |
+
 ### Integrations
 
 | Method & path | Purpose | Rate limit |

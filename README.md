@@ -20,6 +20,8 @@ Scaper is a local-first web scraper, website watcher and price tracker with an A
 | **Changes inbox** | Every change your watchers find, in one triage inbox (keyboard: j/k, i, e, x). Your AI can mark changes important and summarize them; "Not useful" teaches the watcher which lines to ignore and becomes an example for the AI. |
 | **Briefings** | A daily or weekly briefing across all watchers and tasks (filtered by tags, optional AI executive summary, skipped when quiet), sent to your channels or downloaded as a page or Markdown. |
 | **Alerts** | In-app inbox and desktop pop-ups, plus Telegram, email (SMTP), Discord, Slack, ntfy push and webhooks (n8n, Make, Zapier, Home Assistant). Quiet hours, mute all, failure alerts. |
+| **Decision model** | Connect a decisions model through OpenRouter (for example `openai/gpt-6-luna-decisions`). It answers yes/no, pick-one and rating questions with probabilities, so Scaper can score every link on a page for what you want (category scrapes pick their categories this way), check a page before you scrape it (robots.txt and page rules first, then personal data, members-only content, page kind and "does it have what I asked for"), and double-check the agent's changes. Hard rules always win; the model can only add caution. The **Decisions** page has the scrape check, the link scorer and a playground with recipes, form and JSON editing and a threshold. |
+| **Network and VPN** | A VPN on your computer covers Scaper as is. If your VPN app or office gives you a proxy, set one HTTP, HTTPS or SOCKS5 proxy, choose whether AI calls use it too, and test the route from Settings → Scraping. Scaper keeps identifying itself, following robots.txt and its delays either way. |
 | **Integrations** | An MCP server so Claude Code, Claude Desktop, Cursor and other AI apps can use Scaper's tools (read-only unless you allow changes). Named webhook endpoints with per-event subscriptions, HMAC signatures, retries with backoff, a delivery log and redeliver. Google Sheets sync per task (replace, append or update rows by key) with a service account. |
 | **Data grid** | Typed columns, per-column stats and filters (values, ranges, empty), pin, resize, hide, saved views per task, virtual scrolling for 100 000 rows, a row drawer, copy for Excel and export. |
 | **AI agent** | Ask in plain words. It has 40 tools: read and extract pages, its own browser (click, type, choose, scroll), map a site, plan category scrapes, create and schedule tasks, compare runs, watchers, prices and deals, memory. It asks before changing anything (or not, if you say so), shows every step, takes follow-ups, and runs on any model you choose. |
@@ -121,6 +123,14 @@ curl -X POST -H "Authorization: Bearer $SCAPER_TOKEN" "http://127.0.0.1:3000/api
 ```
 
 Every route is in [docs/API.md](docs/API.md). The same page has bookmarklets ("Scrape this page", "Watch this page", "Track this price") for your browser's bookmarks bar.
+
+## Decision model (OpenRouter)
+
+1. Settings → AI → Add provider → OpenRouter, paste your key.
+2. In **Decision model**, turn it on, pick that provider and keep or change the model id. The endpoint `https://openrouter.ai/api/alpha/decisions` is worked out from the provider's URL.
+3. Press **Test it**, then try it on the **Decisions** page.
+
+Calls count against the same daily limit and monthly budget as your other AI calls and show in the AI log as "Decision: …".
 
 ## Connect AI apps (MCP)
 

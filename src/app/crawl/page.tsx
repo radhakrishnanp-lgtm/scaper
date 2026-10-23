@@ -18,9 +18,9 @@ import { hostOf, plural } from "@/lib/format";
 
 type Plan = {
   startUrl: string; title: string; goal: string; mode: FetchMode;
-  categories: { name: string; url: string; picked: boolean }[];
+  categories: { name: string; url: string; picked: boolean; p?: number }[];
   sample: { url: string; itemSelector: string; fields: { name: string; selector: string; attr: string }[]; rows: Record<string, Cell>[]; count: number; note: string | null };
-  pagination: Pagination; otherLinks: { name: string; url: string }[]; notes: string[];
+  pagination: Pagination; otherLinks: { name: string; url: string; p?: number }[]; notes: string[]; pickedBy?: "decisions" | "chat" | "none";
 };
 type Job = { id: string; status: string; error: string | null; progress: { done?: number; total?: number; rows?: number; label?: string }; result: { runId?: string } | null; private?: boolean };
 type Log = { id: number; level: string; message: string };
@@ -57,7 +57,7 @@ function CrawlPage() {
   const router = useRouter();
   const toast = useToast();
   const [url, setUrl] = useState(params.get("url") ?? "");
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(params.get("goal") ?? "");
   const [mode, setMode] = useState<FetchMode>("browser");
   const [maxCategories, setMaxCategories] = useState(8);
   const [pages, setPages] = useState(3);
@@ -172,7 +172,7 @@ function CrawlPage() {
           )}
           <div className="mt-6 grid gap-6">
             <Card>
-              <CardHeader title={`2. Categories (${picked.length} of ${cats.length})`} description={`From ${plan.title || hostOf(plan.startUrl)}. Untick what you do not want, rename, or add more.`} />
+              <CardHeader title={`2. Categories (${picked.length} of ${cats.length})`} description={`From ${plan.title || hostOf(plan.startUrl)}. ${plan.pickedBy === "decisions" ? "Picked by your decision model; the percentage is how likely each holds what you asked for. " : ""}Untick what you do not want, rename, or add more.`} />
               <div className="space-y-3 p-5">
                 <ul className="divide-y divide-border rounded-xl border border-border">
                   {cats.map((c, i) => (
@@ -182,6 +182,7 @@ function CrawlPage() {
                         <Input aria-label="Category name" className="h-8" value={c.name} onChange={(e) => setCats((x) => x.map((y, k) => (k === i ? { ...y, name: e.target.value } : y)))} />
                         <a href={c.url} target="_blank" rel="noreferrer" className="mt-0.5 block truncate font-mono text-xs text-muted hover:text-accent">{c.url}</a>
                       </div>
+                      {c.p !== undefined && <Badge tone={c.p >= 0.7 ? "success" : "neutral"}>{Math.round(c.p * 100)}%</Badge>}
                       <IconButton label={`Remove ${c.name}`} onClick={() => setCats((x) => x.filter((_, k) => k !== i))}><Trash2 className="size-4" /></IconButton>
                     </li>
                   ))}
@@ -190,7 +191,7 @@ function CrawlPage() {
                 {plan.otherLinks.filter((l) => !cats.some((c) => c.url === l.url)).length > 0 && (
                   <Select aria-label="Add a link from the site's menu" value="" onChange={(e) => { const l = plan.otherLinks.find((x) => x.url === e.target.value); if (l) addCategory(l.url, l.name); }}>
                     <option value="">Add from the site&apos;s menu…</option>
-                    {plan.otherLinks.filter((l) => !cats.some((c) => c.url === l.url)).map((l) => <option key={l.url} value={l.url}>{l.name} ({new URL(l.url).pathname})</option>)}
+                    {plan.otherLinks.filter((l) => !cats.some((c) => c.url === l.url)).map((l) => <option key={l.url} value={l.url}>{l.p !== undefined ? `${Math.round(l.p * 100)}% · ` : ""}{l.name} ({new URL(l.url).pathname})</option>)}
                   </Select>
                 )}
                 <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); addCategory(addUrl.trim()); setAddUrl(""); }}>

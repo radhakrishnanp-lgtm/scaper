@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Clock, Globe, ListChecks, Play, Save, Zap } from "lucide-react";
+import { ChevronDown, Clock, Globe, ListChecks, Play, Save, ShieldCheck, Zap } from "lucide-react";
 import { ExtractEditor, newField, type ExtractValue } from "@/components/extract-editor";
 import { PaginationField } from "@/components/form-bits";
 import { ScrapeResultView, type RunView } from "@/components/scrape-result";
@@ -81,7 +81,10 @@ function ScrapePage() {
       <PageHeader
         title="Quick scrape"
         description="Pull data out of one page now. For many pages, schedules and alerts, save it as a task."
-        actions={<Link prefetch={false} href="/tasks"><Button variant="secondary" icon={<ListChecks className="size-4" />}>Tasks</Button></Link>}
+        actions={<div className="flex flex-wrap gap-2">
+          <Link prefetch={false} href={`/decisions?tab=check${url.trim() ? `&url=${encodeURIComponent(url.trim())}` : ""}`}><Button variant="secondary" icon={<ShieldCheck className="size-4" />}>Is it OK to scrape?</Button></Link>
+          <Link prefetch={false} href="/tasks"><Button variant="secondary" icon={<ListChecks className="size-4" />}>Tasks</Button></Link>
+        </div>}
       />
       <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-6">

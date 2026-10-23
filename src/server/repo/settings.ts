@@ -101,7 +101,8 @@ export function saveSettings(patch: Partial<{ [K in keyof Settings]: Partial<Set
   if (aiPatch.providers) aiPatch.providers = keepProviderSecrets(aiPatch.providers.map((p) => aiProviderSchema.parse(p)), current.ai.providers);
   const merged = settingsSchema.parse({
     ai: applyLegacyPatch({ ...current.ai, ...aiPatch }, aiPatch),
-    scraping: { ...current.scraping, ...patch.scraping },
+    // The proxy's password comes back masked from the form; masked means "keep the saved one".
+    scraping: { ...current.scraping, ...patch.scraping, ...(patch.scraping?.proxyUrl?.includes("••••") ? { proxyUrl: current.scraping.proxyUrl } : {}) },
     notifications: { ...current.notifications, ...patch.notifications },
     data: { ...current.data, ...patch.data },
     integrations: keepIntegrationSecrets({ ...current.integrations, ...patch.integrations }, current.integrations),

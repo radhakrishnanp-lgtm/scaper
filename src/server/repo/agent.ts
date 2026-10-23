@@ -1,4 +1,5 @@
 import "server-only";
+import type { GuardSignals } from "@/lib/decision-policy";
 import { db } from "../db";
 import { ephemeral } from "./ephemeral";
 import { newId, now, pageSize, parseJson } from "./util";
@@ -9,7 +10,11 @@ export type AgentStep =
   | { type: "answer"; text: string };
 
 /** A change the agent wants to make and is waiting for you to allow. */
-export type PendingApproval = { callId: string; tool: string; args: Record<string, unknown>; summary: string; askedAt: string };
+export type PendingApproval = {
+  callId: string; tool: string; args: Record<string, unknown>; summary: string; askedAt: string;
+  /** Why Scaper asks (deleting, or what the decision model flagged), with the model's probabilities. */
+  risk?: { reasons: string[]; signals: GuardSignals | null; error: string | null };
+};
 
 type Row = {
   id: string; prompt: string; model: string; status: "running" | "done" | "error"; steps: string; answer: string | null;
