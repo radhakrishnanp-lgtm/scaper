@@ -6,9 +6,10 @@ import {
 } from "lucide-react";
 import type { Job } from "@/server/repo/jobs";
 import { BarChart } from "@/components/charts";
+import { BrowserSetup } from "@/components/browser-setup";
 import { useLive } from "@/components/live";
 import { JobStatusBadge, JOB_KIND_LABEL, StatusBadge } from "@/components/status";
-import { Badge, Button, Callout, Card, CardHeader, Code, EmptyState, ErrorNote, PageHeader, Progress, Skeleton, Stat } from "@/components/ui";
+import { Badge, Button, Callout, Card, CardHeader, EmptyState, ErrorNote, PageHeader, Progress, Skeleton, Stat } from "@/components/ui";
 import { hostOf, lastDays, shortDay, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
@@ -71,7 +72,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-28" />)}</div>
       ) : (
         <div className="space-y-6">
-          {(data.failingWatchers > 0 || !data.browser) && (
+          {(data.failingWatchers > 0 || (!data.browser && !onboarding)) && (
             <div className="space-y-2">
               {data.failingWatchers > 0 && (
                 <Callout tone="warning" icon={<AlertTriangle className="size-4 text-warning" />} title={`${data.failingWatchers} watcher${data.failingWatchers === 1 ? " is" : "s are"} failing`}
@@ -79,9 +80,10 @@ export default function Dashboard() {
                   Usually a selector stopped matching after a site redesign, or the site is blocking automated checks.
                 </Callout>
               )}
-              {!data.browser && (
+              {!data.browser && !onboarding && (
                 <Callout tone="neutral" icon={<Terminal className="size-4" />} title="Browser mode is not installed">
-                  Run <Code>npm run setup:browser</Code> once. Fast mode works without it.
+                  <p className="mb-2">Install it here with one click, or use Chrome or Edge from this computer in Settings. Fast mode works without it.</p>
+                  <BrowserSetup compact onReady={() => void reload()} />
                 </Callout>
               )}
             </div>
@@ -100,8 +102,9 @@ export default function Dashboard() {
             <Card>
               <CardHeader title="Get set up" description="A few steps to get the most out of Scaper." />
               <ol className="divide-y divide-border px-5">
-                <Step done={data.browser} title="Install the scraping browser">
-                  Run <Code>npm run setup:browser</Code> once in the project folder. Fast mode works without it.
+                <Step done={data.browser} title="Install the scraping browser" href="/settings?tab=scraping" cta="Browser settings">
+                  One click below, or use Chrome or Edge from this computer. Fast mode works without it.
+                  {!data.browser && <div className="mt-2"><BrowserSetup compact onReady={() => void reload()} /></div>}
                 </Step>
                 <Step done={data.scrapes24h + data.recipes > 0} title="Scrape your first page" href="/scrape" cta="Open scraper">Paste any URL. Auto mode finds lists, tables, products and links for you.</Step>
                 <Step done={data.watchers > 0} title="Watch a page for changes" href="/watchers/new" cta="Add watcher">Get an alert when a price drops, an item is back in stock, or a page changes.</Step>

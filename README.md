@@ -20,6 +20,7 @@ Scaper is a local-first web scraper, website watcher and price tracker with an A
 | **Changes inbox** | Every change your watchers find, in one triage inbox (keyboard: j/k, i, e, x). Your AI can mark changes important and summarize them; "Not useful" teaches the watcher which lines to ignore and becomes an example for the AI. |
 | **Briefings** | A daily or weekly briefing across all watchers and tasks (filtered by tags, optional AI executive summary, skipped when quiet), sent to your channels or downloaded as a page or Markdown. |
 | **Alerts** | In-app inbox and desktop pop-ups, plus Telegram, email (SMTP), Discord, Slack, ntfy push and webhooks (n8n, Make, Zapier, Home Assistant). Quiet hours, mute all, failure alerts. |
+| **Easy set-up** | Add any OpenAI-compatible provider (OpenAI is the default; pasting an OpenRouter, Anthropic, Groq, Gemini or xAI key picks its address), press **Test connection** to check the key, model and tool calling before saving, and set context windows up to 1M or 2M tokens. Install the scraping browser with one click on the dashboard or in Settings, or use the Chrome, Edge or Brave already on your computer. |
 | **Agent team** | The agent is a supervisor. For bigger jobs it starts 2 to 5 helper agents, writes each one's instructions, task, examples and decision questions, and waits for their reports. Helpers run at the same time with their own browser, read-only tools, a shared memory for the whole team and the decision model (text plus a page screenshot). You see every helper, its instructions, steps, cost and report under the answer, and can stop one. Instructions that worked are saved as **playbooks**, versioned and rated after each use, so the best ones are picked first next time; you can edit them too. |
 | **Decision model** | Connect a decisions model through OpenRouter (for example `openai/gpt-6-luna-decisions`). It answers yes/no, pick-one and rating questions with probabilities, so Scaper can score every link on a page for what you want (category scrapes pick their categories this way), check a page before you scrape it (robots.txt and page rules first, then personal data, members-only content, page kind and "does it have what I asked for"), and double-check the agent's changes. Hard rules always win; the model can only add caution. The **Decisions** page has the scrape check, the link scorer and a playground with recipes, form and JSON editing and a threshold. |
 | **Network and VPN** | A VPN on your computer covers Scaper as is. If your VPN app or office gives you a proxy, set one HTTP, HTTPS or SOCKS5 proxy, choose whether AI calls use it too, and test the route from Settings → Scraping. Scaper keeps identifying itself, following robots.txt and its delays either way. |
@@ -37,7 +38,7 @@ Requirements: Node.js 20.9 or newer (22 LTS recommended).
 
 ```bash
 npm install
-npm run setup:browser   # one time: downloads the headless Chromium used by Browser mode
+npm run setup:browser   # optional: or press "Install browser" in the app, or pick Chrome/Edge in Settings → Scraping
 npm run dev             # open http://127.0.0.1:3000
 ```
 

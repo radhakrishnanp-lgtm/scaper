@@ -79,7 +79,7 @@ export function diagnoseRun(d: DiagnoseInput): Diagnosis | null {
           detail: e.message, action: { kind: "setup", label: "Open scraping settings" } };
       case "browser":
         return { ...base, code: "browser", area: "scaper", severity: "error", title: "The scraping browser failed",
-          detail: `${e.message} Run "npm run setup:browser" once, or use Fast mode.`, action: { kind: "retry", label: "Try again now" } };
+          detail: `${e.message}`, action: { kind: "retry", label: "Try again now" } };
       case "step":
         return { ...base, code: "step_failed", area: "setup", severity: "error", title: "A browser step failed",
           detail: `${e.message} The button or field the step uses may have moved.`, action: { kind: "steps", label: "Fix the steps" } };

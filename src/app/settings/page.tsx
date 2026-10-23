@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Bell, Bookmark, Bot, Database, EyeOff, Download, FileUp, Globe, HardDrive, Info, KeyRound, Mail, MessageCircle, Newspaper, Plus, Save, Send, ShieldCheck, Smartphone, Trash2, Webhook, Hash } from "lucide-react";
 import { Panel, TestButton, useSection, type S, type SettingsResponse } from "@/components/settings-bits";
 import { AiSettings } from "@/components/ai-settings";
+import { BrowserSetup } from "@/components/browser-setup";
 import { PrivacySettings } from "@/components/privacy-settings";
 import type { ApiToken } from "@/server/repo/tokens";
 import type { ImportReport } from "@/server/ops/config";
@@ -34,6 +35,13 @@ function ScrapingTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void })
         <Field label="Browser pages at once">{(p) => <Select {...p} value={v.maxConcurrency} onChange={(e) => s.set({ maxConcurrency: Number(e.target.value) })}>{[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}</Select>}</Field>
       </div>
       <Field label="User agent" hint="Empty = Scaper's honest default. Adding your contact details is good manners for heavy use.">{(p) => <Input {...p} value={v.userAgent} onChange={(e) => s.set({ userAgent: e.target.value })} placeholder="Scaper/2 (personal; me@example.com)" />}</Field>
+      <div className="space-y-3 rounded-xl border border-border p-4">
+        <div>
+          <p className="text-sm font-medium">Scraping browser</p>
+          <p className="text-xs text-muted">Browser mode, the element picker, screenshots and the agent&apos;s browser need one. Fast mode works without it.</p>
+        </div>
+        <BrowserSetup onPathSaved={(browserPath) => s.set({ browserPath })} />
+      </div>
       <NetworkSection value={v.proxyUrl} proxyAi={v.proxyAi} error={s.errors.proxyUrl} onChange={(x) => s.set(x)} />
       <div className="space-y-3">
         <Switch label="Respect robots.txt" description="Recommended. Override per site on the Sites page for sites you own." checked={v.respectRobots} onChange={(x) => s.set({ respectRobots: x })} />

@@ -54,7 +54,8 @@ Every task run, watcher check, price refresh, deal search and backup is a job. T
 
 | Symptom | Fix |
 |---|---|
-| "The scraping browser is not installed yet" | `npm run setup:browser` (or switch the job to Fast mode) |
+| "The scraping browser is not installed yet" | Settings → Scraping → Scraping browser → **Install browser**, or **Use this** next to a Chrome/Edge/Brave found on the computer. `npm run setup:browser` does the same from a terminal. Fast mode needs no browser |
+| "The install did not finish … download was blocked" | A firewall, VPN or proxy blocks `cdn.playwright.dev`; allow it, or use a browser already installed |
 | `better-sqlite3` build error on install | Use Node 20/22 LTS; on Windows install "Desktop development with C++" build tools, then `npm rebuild better-sqlite3` |
 | A site keeps showing "blocked" | It is showing a bot check or rate limit. On the Sites page give it a longer delay, open the page yourself, or use the site's official API. Reset the backoff once it works again |
 | "127.0.0.1 points to a private network address" | Turn on Settings → Scraping → "Allow private network addresses" only if you scrape your own devices |

@@ -4,6 +4,7 @@ import { aiUsageToday } from "@/server/repo/agent";
 import { audit } from "@/server/repo/events";
 import { getSettings, publicSettings, saveSettings } from "@/server/repo/settings";
 import { settingsPatchSchema } from "@/lib/schemas";
+import { isBrowserFile } from "@/server/fetcher/browser-setup";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,9 @@ export const PUT = handler(async (req) => {
   if (patch.scraping?.proxyUrl) {
     const ok = /^(https?|socks5h?):\/\/[^\s]+$/i.test(patch.scraping.proxyUrl) || MASKED.test(patch.scraping.proxyUrl);
     if (!ok) throw new HttpError(400, "validation", "Please fix the highlighted fields.", { "scraping.proxyUrl": "Use http://, https:// or socks5://, for example socks5://127.0.0.1:1080" });
+  }
+  if (patch.scraping?.browserPath && !isBrowserFile(patch.scraping.browserPath)) {
+    throw new HttpError(400, "validation", "Please fix the highlighted fields.", { "scraping.browserPath": "Choose the full path of Chrome, Edge, Brave or Chromium on this computer" });
   }
   const saved = saveSettings({ ai: dropMasked(patch.ai), scraping: dropMasked(patch.scraping), notifications: dropMasked(patch.notifications), data: patch.data, integrations: patch.integrations });
   audit("settings.updated", { sections: Object.keys(raw) });

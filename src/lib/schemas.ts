@@ -559,7 +559,7 @@ export const aiSettingsSchema = z.object({
   dailyRequestLimit: z.number().int().min(1).max(100000).default(300),
   // US dollars per calendar month across all models. 0 = no budget.
   monthlyBudget: z.number().min(0).max(100_000).default(0),
-  maxTokens: z.number().int().min(64).max(64_000).default(2000),
+  maxTokens: z.number().int().min(64).max(128_000).default(2000),
   temperature: z.number().min(0).max(2).default(0.2),
   // How much page text goes to the model when its context window is unknown.
   contextTokens: z.number().int().min(2000).max(1_000_000).default(24_000),
@@ -590,6 +590,8 @@ export const scrapingSettingsSchema = z.object({
   blockHeavyResources: z.boolean().default(true),
   allowPrivateNetwork: z.boolean().default(false),
   timeoutSeconds: z.number().int().min(5).max(120).default(30),
+  // Chrome, Edge, Brave or Chromium already on this computer; empty = the browser Scaper installs.
+  browserPath: z.string().trim().max(1000).default(""),
 });
 
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM");

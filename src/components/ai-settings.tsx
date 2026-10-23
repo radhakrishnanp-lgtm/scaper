@@ -37,8 +37,21 @@ const PRESETS: { label: string; name: string; baseUrl: string; auth: AiProvider[
   { label: "Ollama (this PC)", name: "Ollama", baseUrl: "http://localhost:11434/v1", auth: "none" },
   { label: "LM Studio (this PC)", name: "LM Studio", baseUrl: "http://localhost:1234/v1", auth: "none" },
   { label: "vLLM / LiteLLM", name: "My server", baseUrl: "http://localhost:4000/v1", auth: "bearer", hint: "Any OpenAI-compatible server or gateway." },
-  { label: "Custom", name: "", baseUrl: "", auth: "bearer" },
+  { label: "Anthropic (Claude)", name: "Anthropic", baseUrl: "https://api.anthropic.com/v1", auth: "bearer", hint: "Anthropic's OpenAI-compatible endpoint." },
+  { label: "Other OpenAI-compatible", name: "", baseUrl: "", auth: "bearer", hint: "Paste the base URL from your provider's docs; it usually ends in /v1." },
 ];
+
+/** Keys that give away their provider, so pasting one picks the right preset. */
+const KEY_HINTS: { re: RegExp; preset: string }[] = [
+  { re: /^sk-or-/, preset: "OpenRouter" }, { re: /^sk-ant-/, preset: "Anthropic (Claude)" }, { re: /^gsk_/, preset: "Groq" },
+  { re: /^xai-/, preset: "xAI" }, { re: /^AIza/, preset: "Google Gemini" }, { re: /^csk-/, preset: "Cerebras" }, { re: /^fw_/, preset: "Fireworks" },
+];
+const CONTEXT_SIZES = [32_000, 128_000, 200_000, 256_000, 1_000_000, 2_000_000];
+const tokensLabel = (n: number) => (n >= 1_000_000 ? `${n / 1_000_000}M` : `${Math.round(n / 1000)}k`);
+
+type Check = { ok: boolean; steps: { label: string; ok: boolean; detail: string }[]; models: AiModel[]; model: string | null; latencyMs: number | null; tools: boolean | null; json: boolean | null };
+/** What the last check covered: a change to any of these means the result no longer applies. */
+const checkKey = (p: AiProvider) => JSON.stringify([p.baseUrl, p.apiKey, p.auth, p.headers]);
 
 const newModel = (id: string, extra: Partial<AiModel> = {}): AiModel => ({ id, contextWindow: null, inputPrice: 0, outputPrice: 0, tools: null, json: null, ...extra });
 const slugId = (name: string, taken: string[]) => {
@@ -78,9 +91,13 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
   open: boolean; initial: PubProvider | null; taken: string[]; onClose: () => void; onSave: (p: PubProvider) => Promise<boolean>;
 }) {
   const toast = useToast();
-  const [p, setP] = useState<PubProvider>(() => initial ?? { id: "", name: "", baseUrl: "", apiKey: "", auth: "bearer", headers: [], models: [], timeoutSeconds: 120, enabled: true });
+  // A new provider starts as OpenAI; any other OpenAI-compatible service is one click (or one pasted key) away.
+  const [p, setP] = useState<PubProvider>(() => initial ?? { id: "", name: "OpenAI", baseUrl: "https://api.openai.com/v1", apiKey: "", auth: "bearer", headers: [], models: [], timeoutSeconds: 120, enabled: true });
   const [key, setKey] = useState("");
   const [hint, setHint] = useState<string | undefined>();
+  const [checking, setChecking] = useState(false);
+  const [check, setCheck] = useState<(Check & { key: string }) | null>(null);
+  const [unchecked, setUnchecked] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [listing, setListing] = useState(false);
   const [remote, setRemote] = useState<AiModel[] | null>(null);
@@ -117,13 +134,53 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
       if (r.tools) toast.success(`${id} works`, msg); else toast.info(`${id} answers, but…`, `${msg} ${r.notes.join(" ")}`);
     } catch (e) { toast.error(`${id} failed`, errorText(e)); } finally { setTesting(null); }
   };
-  const save = async () => {
-    setSaving(true); setErrors({});
-    const out = body();
+  const applyPreset = (x: (typeof PRESETS)[number]) => { set({ name: x.name, baseUrl: x.baseUrl, auth: x.auth, headers: x.headers ?? [] }); setHint(x.hint); setRemote(null); setCheck(null); };
+  const onKey = (v: string) => {
+    setKey(v);
+    // Only switch presets for a new provider still on a default, never over a URL the person typed.
+    if (initial) return;
+    const preset = PRESETS.find((x) => x.label === KEY_HINTS.find((h) => h.re.test(v.trim()))?.preset);
+    const onDefault = PRESETS.some((x) => x.baseUrl === p.baseUrl && (x.label === "OpenAI" || x.label === "Other OpenAI-compatible"));
+    if (preset && onDefault && preset.baseUrl !== p.baseUrl) { applyPreset(preset); toast.info(`That looks like a ${preset.label} key`, `Switched the address to ${preset.baseUrl}.`); }
+  };
+  const validate = (out: AiProvider) => {
     const local: Record<string, string> = {};
     if (!out.name.trim()) local.name = "Name is required";
     if (!/^https?:\/\/\S+$/i.test(out.baseUrl)) local.baseUrl = "Start with http:// or https://";
-    if (Object.keys(local).length) { setErrors(local); setSaving(false); return; }
+    if (out.auth !== "none" && !out.apiKey) local.apiKey = "Paste your API key, or choose No key for a local model";
+    setErrors(local);
+    return !Object.keys(local).length;
+  };
+  /** Tries the address, the key and one model without saving anything. */
+  const runCheck = async () => {
+    const out = body();
+    if (!validate(out)) return null;
+    setChecking(true); setUnchecked(false);
+    try {
+      const r = await api<Check>("/api/ai/check", { body: { provider: out } });
+      setCheck({ ...r, key: checkKey(out) });
+      // Fill in what the check learned: the models offered (when none were added) and the tested model's abilities.
+      setP((x) => {
+        let models = x.models;
+        if (!models.length && r.model) models = [r.models.find((m) => m.id === r.model) ?? newModel(r.model)];
+        return { ...x, models: models.map((m) => (m.id === r.model && r.latencyMs !== null ? { ...m, tools: r.tools, json: r.json } : m)) };
+      });
+      if (r.models.length && !remote) setRemote(r.models);
+      return r.ok;
+    } catch (e) { toast.error("Could not test the connection", errorText(e)); return null; }
+    finally { setChecking(false); }
+  };
+  const save = async (force = false) => {
+    const out = body();
+    if (!validate(out)) return;
+    // A new or changed key is tested first, so a typo is caught here and not on the first scrape.
+    const fresh = check && check.key === checkKey(out);
+    if (!force && out.auth !== "none" && (key || !initial) && !(fresh && check.ok)) {
+      const ok = fresh ? check.ok : await runCheck();
+      if (ok === false) { setUnchecked(true); return; }
+      if (ok === null) return;
+    }
+    setSaving(true);
     const ok = await onSave(out);
     setSaving(false);
     if (ok) onClose();
@@ -132,14 +189,18 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
 
   return (
     <Dialog open={open} onClose={onClose} xl title={initial ? `Edit ${initial.name}` : "Add an AI provider"} description="Any service or local server with an OpenAI-compatible Chat Completions API."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button icon={<Save className="size-4" />} loading={saving} onClick={save}>Save provider</Button></>}>
+      footer={<>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button variant="secondary" icon={<ShieldCheck className="size-4" />} loading={checking} onClick={() => void runCheck()}>Test connection</Button>
+        <Button icon={<Save className="size-4" />} loading={saving || (checking && !check)} onClick={() => void save()}>Save provider</Button>
+      </>}>
       <div className="space-y-5">
         {!initial && (
           <div>
             <p className="mb-2 text-sm font-medium">Start from</p>
             <div className="flex flex-wrap gap-1.5">
               {PRESETS.map((x) => (
-                <button key={x.label} type="button" onClick={() => { set({ name: x.name, baseUrl: x.baseUrl, auth: x.auth, headers: x.headers ?? [] }); setHint(x.hint); setRemote(null); }}
+                <button key={x.label} type="button" onClick={() => applyPreset(x)}
                   className={`h-8 rounded-full border px-3 text-xs ${p.baseUrl === x.baseUrl && p.name === x.name ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:text-text"}`}>{x.label}</button>
               ))}
             </div>
@@ -157,10 +218,11 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
               <option value="none">No key (local models)</option>
             </Select>
           )}</Field>
-          <Field label="API key" hint={p.hasApiKey ? `Saved (${p.apiKey}). Type a new one to replace it.` : "Stored only in your local database; never sent to the browser."}>
-            {(f) => <Input {...f} type="password" autoComplete="off" disabled={p.auth === "none"} value={key} onChange={(e) => setKey(e.target.value)} placeholder={p.hasApiKey ? "••••••••" : p.auth === "none" ? "Not needed" : "sk-…"} />}
+          <Field label="API key" error={errors.apiKey} hint={p.hasApiKey ? `Saved (${p.apiKey}). Type a new one to replace it.` : "Stored only in your local database; never sent to the browser. Pasting a key picks its provider."}>
+            {(f) => <Input {...f} type="password" autoComplete="off" disabled={p.auth === "none"} value={key} onChange={(e) => onKey(e.target.value)} placeholder={p.hasApiKey ? "••••••••" : p.auth === "none" ? "Not needed" : "sk-…"} />}
           </Field>
         </div>
+        {check && <CheckResult check={check} stale={check.key !== checkKey(body())} onSaveAnyway={unchecked ? () => void save(true) : undefined} />}
         {p.hasApiKey && <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => { set({ apiKey: "", hasApiKey: false }); setKey(""); }}>Remove saved key (on save)</Button>}
 
         <details className="rounded-xl border border-border p-3" open={p.headers.length > 0}>
@@ -221,7 +283,12 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
                     {p.models.map((m) => (
                       <tr key={m.id} className="border-t border-border">
                         <td className="py-1.5 pr-2 font-mono text-xs">{m.id}</td>
-                        <td className="px-2"><Input aria-label={`Context window of ${m.id}`} type="number" className="h-8 w-28" value={m.contextWindow ?? ""} placeholder="unknown" onChange={(e) => setModel(m.id, { contextWindow: e.target.value ? Number(e.target.value) : null })} /></td>
+                        <td className="px-2">
+                          <Select aria-label={`Context window of ${m.id}`} className="h-8 w-32" value={m.contextWindow ?? ""} onChange={(e) => setModel(m.id, { contextWindow: e.target.value ? Number(e.target.value) : null })}>
+                            <option value="">Default</option>
+                            {[...new Set([...CONTEXT_SIZES, ...(m.contextWindow ? [m.contextWindow] : [])])].sort((a, b) => a - b).map((n) => <option key={n} value={n}>{tokensLabel(n)}{n === m.contextWindow && !CONTEXT_SIZES.includes(n) ? " (from provider)" : ""}</option>)}
+                          </Select>
+                        </td>
                         <td className="px-2"><Input aria-label={`Input price of ${m.id}`} type="number" step="0.01" min={0} className="h-8 w-24" value={m.inputPrice} onChange={(e) => setModel(m.id, { inputPrice: Number(e.target.value) || 0 })} /></td>
                         <td className="px-2"><Input aria-label={`Output price of ${m.id}`} type="number" step="0.01" min={0} className="h-8 w-24" value={m.outputPrice} onChange={(e) => setModel(m.id, { outputPrice: Number(e.target.value) || 0 })} /></td>
                         <td className="px-2">{cap(m.tools)}</td>
@@ -244,6 +311,22 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
         </div>
       </div>
     </Dialog>
+  );
+}
+
+function CheckResult({ check, stale, onSaveAnyway }: { check: Check; stale: boolean; onSaveAnyway?: () => void }) {
+  return (
+    <Callout tone={stale ? "neutral" : check.ok ? "success" : "danger"} title={stale ? "Changed since the last test" : check.ok ? "Connection works" : "The connection did not work"}
+      action={onSaveAnyway && <Button size="sm" variant="secondary" onClick={onSaveAnyway}>Save anyway</Button>}>
+      <ul className="mt-1 space-y-1">
+        {check.steps.map((x) => (
+          <li key={x.label} className="flex gap-2 text-sm">
+            {x.ok ? <Check className="mt-0.5 size-4 shrink-0 text-success" aria-label="ok" /> : <X className="mt-0.5 size-4 shrink-0 text-danger" aria-label="failed" />}
+            <span><span className="font-medium">{x.label}:</span> {x.detail}</span>
+          </li>
+        ))}
+      </ul>
+    </Callout>
   );
 }
 
@@ -410,8 +493,12 @@ export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved:
       <Panel title="How the AI works" icon={<Gauge className="size-4 text-muted" />} description="Defaults for every AI call. Page text is sized to each model's context window when you set it." footer={saveBtn}>
         <div className="grid gap-4 md:grid-cols-4">
           <Field label="Temperature" hint="0 = exact, higher = more creative.">{(f) => <Input {...f} type="number" min={0} max={2} step={0.1} value={v.temperature} onChange={(e) => s.set({ temperature: Math.min(2, Math.max(0, Number(e.target.value) || 0)) })} />}</Field>
-          <Field label="Max tokens per answer" error={s.errors.maxTokens}>{(f) => <Input {...f} type="number" min={64} max={64000} value={v.maxTokens} onChange={(e) => s.set({ maxTokens: Number(e.target.value) || 64 })} />}</Field>
-          <Field label="Default context (tokens)" hint="When a model's window is not set.">{(f) => <Input {...f} type="number" min={2000} value={v.contextTokens} onChange={(e) => s.set({ contextTokens: Number(e.target.value) || 2000 })} />}</Field>
+          <Field label="Max tokens per answer" error={s.errors.maxTokens}>{(f) => <Input {...f} type="number" min={64} max={128000} value={v.maxTokens} onChange={(e) => s.set({ maxTokens: Number(e.target.value) || 64 })} />}</Field>
+          <Field label="Default context (tokens)" hint="When a model's window is not set. Up to 1M.">{(f) => (
+            <Select {...f} value={v.contextTokens} onChange={(e) => s.set({ contextTokens: Number(e.target.value) })}>
+              {[...new Set([8_000, 16_000, 24_000, ...CONTEXT_SIZES.filter((n) => n <= 1_000_000), v.contextTokens])].sort((a, b) => a - b).map((n) => <option key={n} value={n}>{tokensLabel(n)} tokens</option>)}
+            </Select>
+          )}</Field>
           <Field label="Agent steps per request">{(f) => <Input {...f} type="number" min={1} max={40} value={v.agentMaxSteps} onChange={(e) => s.set({ agentMaxSteps: Number(e.target.value) || 1 })} />}</Field>
         </div>
         <div className="grid gap-4 md:grid-cols-2">

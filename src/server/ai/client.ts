@@ -77,7 +77,8 @@ export function contextBudget(choice: ModelChoice = "main") {
   const ai = getSettings().ai;
   const window = resolveModel(choice, ai)?.info.contextWindow;
   if (!window) return ai.contextTokens;
-  return Math.max(1500, Math.min(Math.floor(window * 0.6) - ai.maxTokens, 400_000));
+  // 1M-token models get up to 600k tokens of page text; the rest is room for the prompt, history and answer.
+  return Math.max(1500, Math.min(Math.floor(window * 0.6) - ai.maxTokens, 800_000));
 }
 
 /** Accepts a base URL (…/v1) or a full endpoint (…/chat/completions?api-version=…) and points it at `path`. */
@@ -345,4 +346,64 @@ export async function testModel(r: ResolvedModel) {
   } catch (e) { notes.push(`Tools: ${(e as Error).message}`); }
   addAiUsage(base.tokensIn, base.tokensOut, costOf(r.info, base.tokensIn, base.tokensOut));
   return { reply: base.content.trim().slice(0, 100), latencyMs, json, tools, notes };
+}
+
+export type ConnectionCheck = {
+  ok: boolean;
+  /** Each step the check ran, in order, so the form can show exactly what failed. */
+  steps: { label: string; ok: boolean; detail: string }[];
+  models: AiModel[];
+  model: string | null;
+  latencyMs: number | null;
+  tools: boolean | null;
+  json: boolean | null;
+};
+
+/**
+ * Checks a provider before it is saved: can Scaper reach it, is the key accepted, does a model answer.
+ * Some servers have no model list; then the answer from the model is what counts.
+ */
+export async function checkConnection(p: AiProvider, wanted?: string): Promise<ConnectionCheck> {
+  const out: ConnectionCheck = { ok: false, steps: [], models: [], model: null, latencyMs: null, tools: null, json: null };
+  let listError: string | null = null;
+  try {
+    out.models = await listProviderModels(p);
+    out.steps.push({ label: "Model list", ok: true, detail: out.models.length ? `${out.models.length} models offered.` : "The provider listed no models." });
+  } catch (e) {
+    listError = (e as Error).message;
+    // A refused key or an unreachable server ends the check: no model call can work either.
+    if (/refused the API key|Could not reach/.test(listError)) {
+      out.steps.push({ label: "Model list", ok: false, detail: listError });
+      return out;
+    }
+    out.steps.push({ label: "Model list", ok: false, detail: `${listError} Some servers have no model list; trying a model directly.` });
+  }
+  const model = wanted || p.models[0]?.id || pickDefaultModel(out.models);
+  if (!model) {
+    out.steps.push({ label: "Model answer", ok: false, detail: "Add a model id so Scaper can send a test message." });
+    out.ok = !listError;
+    return out;
+  }
+  out.model = model;
+  const info = p.models.find((m) => m.id === model) ?? out.models.find((m) => m.id === model) ?? aiModelSchema.parse({ id: model });
+  try {
+    const r = await testModel({ provider: p, model, info });
+    out.latencyMs = r.latencyMs; out.tools = r.tools; out.json = r.json;
+    out.steps.push({ label: "Model answer", ok: true, detail: `${model} answered "${r.reply}" in ${(r.latencyMs / 1000).toFixed(1)} s.` });
+    out.steps.push({ label: "Tool calling", ok: r.tools !== false, detail: r.tools ? "Works, so the agent can use this model." : r.tools === null ? "It answered without calling the test tool; the agent may struggle." : "Not supported; fine for extraction, not for the agent." });
+    out.ok = true;
+  } catch (e) {
+    out.steps.push({ label: "Model answer", ok: false, detail: (e as Error).message });
+  }
+  return out;
+}
+
+/** A sensible chat model from a provider's list when the form has none yet. */
+function pickDefaultModel(models: AiModel[]) {
+  const ids = models.map((m) => m.id);
+  const skip = /embed|whisper|tts|dall-e|image|audio|moderation|realtime|transcribe|rerank|guard/i;
+  const chat = ids.filter((id) => !skip.test(id));
+  const prefer = [/mini/i, /flash/i, /small/i, /instant/i, /8b/i];
+  for (const re of prefer) { const hit = chat.find((id) => re.test(id)); if (hit) return hit; }
+  return chat[0] ?? null;
 }

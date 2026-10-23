@@ -121,6 +121,8 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | GET `/api/playbooks?q` · POST `/api/playbooks` | List playbooks (best success rate first when searching) · create `{name, kind?, instructions, examples?, questions?, notes?}` | – |
 | PUT/DELETE `/api/playbooks/:id` | Save a new version (name kept) · delete | – |
 | GET `/api/ai/usage` | Requests, tokens and cost today, this month and for 30 days, with limits and per-model stats | – |
+| POST `/api/ai/check` | "Test connection" before saving `{provider, model?}`: model list, one answer and tool calling, each as a step with a reason; saves nothing | 10/min |
+| GET/POST `/api/system/browser` | Scraping browser status (ready, which browser, browsers found on this computer, install progress) · `{action: "install"}` runs Playwright's installer in the background · `{action: "test"}` starts the browser once | install 3/min |
 | POST `/api/ai/models` · POST `/api/ai/test` | List a provider's models `{provider}` · test a model `{providerId \| provider, model}` (answers, JSON mode, tools) | – |
 | GET/DELETE `/api/ai/calls` · GET `/api/ai/calls/:id` | The AI log (`?purpose&status&model&q&before&limit&stats=30`); DELETE takes `?olderThanDays` · one call with prompt and reply | – |
 | GET/POST `/api/ai/memory` · DELETE `/api/ai/memory/:id` | The agent's memory notes | – |

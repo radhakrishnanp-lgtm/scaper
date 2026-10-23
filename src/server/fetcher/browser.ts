@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { chromium, type Browser, type Page } from "playwright";
 import type { BrowserStep, Pagination } from "@/lib/schemas";
 import { env } from "../env";
+import { getSettings } from "../repo/settings";
 import { log } from "../log";
 import { FetchError } from "./errors";
 import { isPrivateAddress } from "./network-guard";
@@ -16,8 +17,11 @@ const HEAVY = new Set(["image", "media", "font"]);
 const IDLE_CLOSE_MS = 5 * 60_000;
 let idleTimer: NodeJS.Timeout | null = null;
 
-function executablePath(): string | undefined {
+/** Which browser to run: the environment variable, then the one chosen in Settings, then the one Scaper installed. */
+export function executablePath(): string | undefined {
   if (env.PLAYWRIGHT_EXECUTABLE_PATH) return env.PLAYWRIGHT_EXECUTABLE_PATH;
+  const chosen = getSettings().scraping.browserPath;
+  if (chosen && fs.existsSync(chosen)) return chosen;
   return undefined;
 }
 
@@ -32,7 +36,9 @@ function proxyOption(proxyUrl: string) {
 }
 
 async function getBrowser(proxyUrl: string): Promise<Browser> {
-  if (pool.browser && pool.proxyKey !== proxyUrl && pool.active === 0) {
+  // A new proxy or a different browser chosen in Settings means a fresh launch once nothing is running.
+  const key = `${proxyUrl}|${executablePath() ?? ""}`;
+  if (pool.browser && pool.proxyKey !== key && pool.active === 0) {
     await pool.browser.close().catch(() => undefined);
     pool.browser = null;
   }
@@ -42,7 +48,7 @@ async function getBrowser(proxyUrl: string): Promise<Browser> {
       .launch({ headless: true, executablePath: executablePath(), proxy: proxyOption(proxyUrl) })
       .then((b) => {
         pool.browser = b;
-        pool.proxyKey = proxyUrl;
+        pool.proxyKey = key;
         b.on("disconnected", () => { pool.browser = null; });
         log.info("browser.launched", { proxy: Boolean(proxyUrl) });
         return b;
@@ -52,7 +58,7 @@ async function getBrowser(proxyUrl: string): Promise<Browser> {
         throw new FetchError(
           "browser",
           missing
-            ? "The scraping browser is not installed yet. Run `npm run setup:browser` once, then try again (or switch this job to Fast mode)."
+            ? "The scraping browser is not installed yet. Install it in Settings → Scraping → Scraping browser (one click), then try again, or switch this job to Fast mode."
             : `The browser could not start: ${e.message.split("\n")[0]}`,
         );
       })
@@ -364,7 +370,7 @@ export async function closeBrowser() {
 
 export function browserInstalled(): boolean {
   try {
-    return fs.existsSync(executablePath() ?? chromium.executablePath());
+    return fs.existsSync(/* turbopackIgnore: true */ executablePath() ?? chromium.executablePath());
   } catch {
     return false;
   }
