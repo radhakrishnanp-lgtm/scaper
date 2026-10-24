@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp, Bot, Brain, Check, CircleDollarSign, Gauge, KeyRound, ListPlus, Pencil, Plus, Power, Route, Save, Scale, ShieldCheck, Trash2, Users, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Brain, GraduationCap, Check, CircleDollarSign, Gauge, KeyRound, ListPlus, Pencil, Plus, Power, Route, Save, Scale, ShieldCheck, Trash2, Users, X } from "lucide-react";
 import type { AiModel, AiProvider, DecisionSettings, ModelRef } from "@/lib/schemas";
 import type { MemoryNote } from "@/server/repo/ai";
 import { BarChart } from "@/components/charts";
@@ -488,6 +488,15 @@ export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved:
           <Field label="Helper model" hint="The supervisor can pick another per helper.">{(f) => <Select {...f} value={v.team.workerModel} onChange={(e) => s.set({ team: { ...v.team, workerModel: e.target.value as "main" | "fast" } })}><option value="fast">Fast model</option><option value="main">Main model</option></Select>}</Field>
         </div>
         <Switch label="Learn playbooks" description="The supervisor saves helper instructions that worked, rates them after each use and improves them. See them under Agent → Playbooks." checked={v.team.evolve} onChange={(x) => s.set({ team: { ...v.team, evolve: x } })} />
+      </Panel>
+
+      <Panel title="Learning" icon={<GraduationCap className="size-4 text-muted" />}
+        description="How the agent gets to know Scaper and improves. See what it knows under Agent → Knowledge."
+        footer={saveBtn}>
+        <Switch label="Give the agent Scaper's guide" description="A short map of every page, tool and your current set-up in each request, plus app_guide for the full A to Z. It is rebuilt from the app, so new features appear on their own." checked={v.learning.guide} onChange={(x) => s.set({ learning: { ...v.learning, guide: x } })} />
+        <Switch label="Let it keep notes" description="The agent writes Markdown notes (site quirks, selectors that worked, how-tos, lessons) and reads them before related jobs. Also saved as .md files in the data folder's knowledge folder." checked={v.learning.notes} onChange={(x) => s.set({ learning: { ...v.learning, notes: x } })} />
+        <Switch label="Review its own work" description="After each job the fast model scores it from 1 to 5, lists what went wrong and keeps one lesson the agent sees next time. One small extra AI call per job." checked={v.learning.selfReview} onChange={(x) => s.set({ learning: { ...v.learning, selfReview: x } })} />
+        <Field label="Review jobs with at least this many tool calls" hint="0 reviews every job.">{(f) => <Input {...f} type="number" min={0} max={20} className="w-28" value={v.learning.reviewMinSteps} onChange={(e) => s.set({ learning: { ...v.learning, reviewMinSteps: Math.min(20, Math.max(0, Number(e.target.value) || 0)) } })} />}</Field>
       </Panel>
 
       <Panel title="How the AI works" icon={<Gauge className="size-4 text-muted" />} description="Defaults for every AI call. Page text is sized to each model's context window when you set it." footer={saveBtn}>

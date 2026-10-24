@@ -542,6 +542,41 @@ CREATE TABLE agent_playbooks (
 );
 `,
   },
+  {
+    id: 8,
+    name: "agent_knowledge",
+    sql: `
+-- The agent's own Markdown notes: how-tos, site notes and lessons it writes and keeps improving.
+-- Also mirrored as .md files in data/knowledge so you can open them in any editor.
+CREATE TABLE agent_notes (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'how-to' CHECK (kind IN ('how-to','site','lesson','reference')),
+  body TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL DEFAULT 'agent' CHECK (source IN ('agent','you')),
+  uses INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- The agent's review of its own finished runs: a score, what went wrong and the lesson it took.
+CREATE TABLE agent_reviews (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL UNIQUE REFERENCES agent_runs(id) ON DELETE CASCADE,
+  score INTEGER NOT NULL CHECK (score BETWEEN 1 AND 5),
+  summary TEXT NOT NULL,
+  problems TEXT NOT NULL DEFAULT '[]',
+  lesson TEXT NOT NULL DEFAULT '',
+  note_name TEXT,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_reviews_created ON agent_reviews(created_at);
+`,
+  },
 ];
 
 function migrate(db: Database.Database) {

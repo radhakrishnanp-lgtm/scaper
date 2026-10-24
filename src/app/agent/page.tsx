@@ -2,9 +2,11 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BadgePercent, BookOpen, Bot, Check, CheckCircle2, EyeOff, Hand, X, ChevronRight, CornerDownRight, ListChecks, MessageSquarePlus, Radar, Search, Send, ShieldCheck, Square, Trash2, Wrench, XCircle } from "lucide-react";
+import { BadgePercent, BookOpen, Bot, GraduationCap, Check, CheckCircle2, EyeOff, Hand, X, ChevronRight, CornerDownRight, ListChecks, MessageSquarePlus, Radar, Search, Send, ShieldCheck, Square, Trash2, Wrench, XCircle } from "lucide-react";
 import type { AgentRun, AgentStep } from "@/server/repo/agent";
 import { PlaybooksDialog, TeamPanel, type TeamData } from "@/components/agent-team";
+import { KnowledgeDialog, ReviewCard } from "@/components/agent-knowledge";
+import type { Review } from "@/server/repo/knowledge";
 import { CopyButton } from "@/components/data-table";
 import { ConfirmDialog } from "@/components/dialog";
 import { Markdown } from "@/components/markdown";
@@ -46,6 +48,7 @@ const TOOL_LABEL: Record<string, string> = {
   task_health: "Checked task health", repair_task: "Started AI repair", job_status: "Checked job", change_inbox: "Read change inbox", review_changes: "Marked changes reviewed", briefing: "Wrote briefing",
   notify_user: "Sent alert", site_info: "Checked site", slow_down_site: "Slowed down site", remember: "Remembered", forget: "Forgot", search_scaper: "Searched Scaper", ai_usage: "Checked AI usage",
   spawn_agents: "Started helpers", team_status: "Checked the team", wait_for_agents: "Waited for helpers", message_agent: "Messaged a helper", stop_agent: "Stopped a helper",
+  app_guide: "Read the Scaper guide", list_notes: "Listed notes", read_note: "Read a note", write_note: "Wrote a note", delete_note: "Deleted a note",
   find_playbooks: "Looked up playbooks", save_playbook: "Saved a playbook", rate_playbook: "Rated a playbook", shared_memory_write: "Shared a note", shared_memory_read: "Read shared memory",
   decide: "Asked the decision model", check_scrape: "Checked if OK to scrape", pick_links: "Scored links",
   // Older conversations
@@ -56,7 +59,7 @@ type ProviderModels = { id: string; name: string; enabled: boolean; models: { id
 type AiPublic = { main: { providerId: string; model: string }; fast: { providerId: string; model: string }; providers: ProviderModels[] };
 const money = (v: number) => (v >= 0.01 ? `$${v.toFixed(2)}` : v > 0 ? `$${v.toFixed(4)}` : "");
 
-type Detail = { run: AgentRun; thread: AgentRun[]; team: TeamData | null };
+type Detail = { run: AgentRun; thread: AgentRun[]; team: TeamData | null; review: Review | null };
 
 function prettyResult(text: string) {
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
@@ -228,6 +231,7 @@ function AgentPage() {
   const [stopping, setStopping] = useState(false);
   const [del, setDel] = useState<AgentRun | null>(null);
   const [playbooks, setPlaybooks] = useState(false);
+  const [knowledge, setKnowledge] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   const ai = settings.data?.settings.ai;
@@ -237,12 +241,17 @@ function AgentPage() {
   const isRunning = run?.status === "running";
   if (isRunning !== running) setRunning(isRunning);
   const { reload: reloadHistory } = history;
+  const { reload: reloadDetail } = detail;
   const lastStatus = useRef<string | null>(null);
   useEffect(() => {
     if (!run) return;
-    if (lastStatus.current === "running" && run.status !== "running") void reloadHistory();
+    if (lastStatus.current === "running" && run.status !== "running") {
+      void reloadHistory();
+      // The self-review runs just after the answer; pick it up when it lands.
+      if (!run.private) for (const ms of [3000, 8000, 20000]) setTimeout(() => void reloadDetail(), ms);
+    }
     lastStatus.current = run.status;
-  }, [run, reloadHistory]);
+  }, [run, reloadHistory, reloadDetail]);
   const stepCount = run?.steps.length ?? 0;
   useEffect(() => { if (isRunning) bottom.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [stepCount, isRunning]);
 
@@ -282,6 +291,7 @@ function AgentPage() {
     <>
       <PageHeader title="Agent" description="Ask in plain words. It scrapes, compares prices, tracks products and sets up watchers with your own AI model, and shows every step it takes."
         actions={<div className="flex flex-wrap gap-2">
+          <Button variant="secondary" icon={<GraduationCap className="size-4" />} onClick={() => setKnowledge(true)}>Knowledge</Button>
           <Button variant="secondary" icon={<BookOpen className="size-4" />} onClick={() => setPlaybooks(true)}>Playbooks</Button>
           {selected && <Button variant="secondary" icon={<MessageSquarePlus className="size-4" />} onClick={() => { setSelected(""); setPrompt(""); }}>New conversation</Button>}
         </div>} />
@@ -345,6 +355,7 @@ function AgentPage() {
                 ))}
                 <Turn run={run} onStop={stop} stopping={stopping} onAnswered={() => void detail.reload()} />
                 {detail.data!.team && <TeamPanel team={detail.data!.team} runId={run.id} onChanged={() => void detail.reload()} />}
+                {detail.data!.review && <ReviewCard review={detail.data!.review} />}
                 <div ref={bottom} />
               </div>
               <div className="border-t border-border">
@@ -386,6 +397,7 @@ function AgentPage() {
         </Card>
       </div>
       {playbooks && <PlaybooksDialog onClose={() => setPlaybooks(false)} />}
+      {knowledge && <KnowledgeDialog onClose={() => setKnowledge(false)} />}
       <ConfirmDialog open={Boolean(del)} onCancel={() => setDel(null)} onConfirm={() => del && void remove(del)} confirmLabel="Delete" title="Delete this question and answer?"
         body={del?.status === "running" ? "It is still working; it will be stopped first." : "Follow-up questions after it are kept."} />
     </>

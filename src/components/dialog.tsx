@@ -10,16 +10,19 @@ export function Dialog({ open, onClose, title, description, children, footer, wi
   open: boolean; onClose: () => void; title: string; description?: ReactNode; children?: ReactNode; footer?: ReactNode; wide?: boolean; xl?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // Closing because `open` became false is not the person closing it: don't report it, or a parent that
+  // swaps this dialog for another one (say, an editor) would close both.
+  const closingFromProp = useRef(false);
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) d.showModal();
-    if (!open && d.open) d.close();
+    if (!open && d.open) { closingFromProp.current = true; d.close(); }
   }, [open]);
   return (
     <dialog
       ref={ref}
-      onClose={onClose}
+      onClose={() => { if (closingFromProp.current) { closingFromProp.current = false; return; } onClose(); }}
       onClick={(e) => { if (e.target === ref.current) onClose(); }}
       aria-labelledby="dialog-title"
       className={cn(

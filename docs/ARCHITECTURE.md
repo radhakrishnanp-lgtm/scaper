@@ -67,3 +67,13 @@ Migrations live in `src/server/db.ts` (numbered, applied in a transaction at sta
 ## First bottleneck and plan
 
 The first limit is one Chromium on one machine (about 2–4 pages at a time). Next steps when needed: move the scheduler into a separate worker process, swap the in-memory rate limiter and bus for Redis, and Postgres for SQLite via the repo layer.
+
+## Keeping the agent's guide complete
+
+The agent learns the app from `src/server/ai/knowledge.ts`. Tools (`ai/tools.ts`, `ai/team.ts`), menu pages (`components/nav.ts`) and the live set-up are read automatically. When you add a feature:
+
+1. A new page in the menu needs one line in `PAGE_HELP`.
+2. A new tool needs a clear description (at least a sentence); it then appears in the guide, the system prompt's tool map and `app_guide`.
+3. A new area worth explaining gets a topic in `CURATED` (how to use it, which tools, limits).
+
+`tests/knowledge.test.ts` fails if a page has no help, a tool has no description or a topic is empty, so the guide cannot fall behind.

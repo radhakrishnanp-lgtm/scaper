@@ -114,13 +114,15 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 |---|---|---|
 | GET `/api/agent` · POST `/api/agent` | Tool catalog, approval mode and step limit · start a run `{prompt, model?: "main"\|"fast"\|"<providerId>::<model>", followUpOf?, private?}`; poll the run | 10/min |
 | POST `/api/agent/runs/:id/approve` | Answer a pending approval `{decision: allow\|allow_all\|deny}`; 409 when nothing is waiting | – |
-| GET `/api/agent/runs?q&limit` · GET/DELETE `/api/agent/runs/:id` | History · one run with its earlier turns (`thread`) · delete | – |
+| GET `/api/agent/runs?q&limit` · GET/DELETE `/api/agent/runs/:id` | History · one run with its earlier turns (`thread`), its helpers (`team`) and its self-review (`review`) · delete | – |
 | POST `/api/agent/runs/:id/stop` | Stop a running agent after its current step; its helpers stop too | – |
 | GET `/api/agent/runs/:id` → `team` | `{workers, memory}` when the run started helpers: each helper's name, role, instructions, task, examples, decision questions, tools, model, status, steps, report, tokens and cost, plus the shared memory notes; `null` otherwise | – |
 | POST `/api/agent/runs/:id/helpers/:wid/stop` | Stop one helper | – |
 | GET `/api/playbooks?q` · POST `/api/playbooks` | List playbooks (best success rate first when searching) · create `{name, kind?, instructions, examples?, questions?, notes?}` | – |
 | PUT/DELETE `/api/playbooks/:id` | Save a new version (name kept) · delete | – |
 | GET `/api/ai/usage` | Requests, tokens and cost today, this month and for 30 days, with limits and per-model stats | – |
+| GET `/api/knowledge` | What the agent knows: the full guide, its topics, any pages or tools without help, notes, recent self-reviews and their average, the notes folder | – |
+| POST `/api/knowledge/notes` · GET/PUT/DELETE `/api/knowledge/notes/:id` | Add a note `{title, kind: how-to\|site\|lesson\|reference, body}` · read · save a new version · delete (its `.md` file too). Bodies that look like keys or passwords are refused | – |
 | POST `/api/ai/check` | "Test connection" before saving `{provider, model?}`: model list, one answer and tool calling, each as a step with a reason; saves nothing | 10/min |
 | GET/POST `/api/system/browser` | Scraping browser status (ready, which browser, browsers found on this computer, install progress) · `{action: "install"}` runs Playwright's installer in the background · `{action: "test"}` starts the browser once | install 3/min |
 | POST `/api/ai/models` · POST `/api/ai/test` | List a provider's models `{provider}` · test a model `{providerId \| provider, model}` (answers, JSON mode, tools) | – |

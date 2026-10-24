@@ -545,6 +545,16 @@ export const teamSettingsSchema = z.object({
 });
 export type TeamSettings = z.infer<typeof teamSettingsSchema>;
 
+/** How the agent learns: an always-current guide to Scaper, its own Markdown notes and a review of each finished job. */
+export const learningSettingsSchema = z.object({
+  guide: z.boolean().default(true),
+  notes: z.boolean().default(true),
+  selfReview: z.boolean().default(true),
+  // Runs with fewer tool calls than this are not reviewed (a plain question does not need one).
+  reviewMinSteps: z.number().int().min(0).max(20).default(2),
+});
+export type LearningSettings = z.infer<typeof learningSettingsSchema>;
+
 export const aiSettingsSchema = z.object({
   // Single-provider fields from older versions. Saving them updates the provider called "default".
   baseUrl: z.string().trim().max(500).default(""),
@@ -575,6 +585,7 @@ export const aiSettingsSchema = z.object({
   cacheHours: z.number().int().min(0).max(720).default(0),
   decisions: decisionSettingsSchema.default(decisionSettingsSchema.parse({})),
   team: teamSettingsSchema.default(teamSettingsSchema.parse({})),
+  learning: learningSettingsSchema.default(learningSettingsSchema.parse({})),
 });
 
 export const scrapingSettingsSchema = z.object({
@@ -682,3 +693,10 @@ export const settingsPatchSchema = z.object({
 export const apiTokenSchema = z.object({ name: z.string().trim().min(1, "Name is required").max(80) });
 
 export const loginSchema = z.object({ password: z.string().min(1).max(500) });
+
+/** A note written or edited by you on the knowledge screen. */
+export const noteInputSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(120),
+  kind: z.enum(["how-to", "site", "lesson", "reference"]).default("how-to"),
+  body: z.string().trim().min(1, "Write something").max(20_000),
+});
