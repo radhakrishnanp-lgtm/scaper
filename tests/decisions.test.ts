@@ -99,7 +99,8 @@ process.env.SCAPER_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "scaper-deci
 const { openDatabase, setDatabaseForTests } = await import("@/server/db");
 setDatabaseForTests(openDatabase(":memory:"));
 const { saveSettings, getSettings, publicSettings } = await import("@/server/repo/settings");
-const { decide, decisionsUrl, decisionsTarget } = await import("@/server/ai/decisions");
+const { decide, decisionsUrl, decisionsTarget, checkDecisionsConnection } = await import("@/server/ai/decisions");
+const { splitDecisions, isDecisionsModel, isDecisionsUrl, chatBaseFromDecisions } = await import("@/lib/decisions-url");
 const { checkScrape, scoreLinks, guardAction } = await import("@/server/ai/judge");
 const { planCategoryScrape } = await import("@/server/ai/crawl");
 const { candidateLinks } = await import("@/server/ai/crawl");
@@ -315,6 +316,48 @@ describe("agent guardrail", () => {
     const g = await guardAction({ request: "Watch example.com", tool: "create_watcher", summary: "Create watcher", args: {}, destructive: false });
     expect(g.ask).toBe(true);
     expect(g.error).toMatch(/refused the key/);
+  });
+});
+
+describe("a Decisions endpoint pasted as a provider", () => {
+  const pasted = () => ({
+    id: "luna", name: "openrouter - Luna Decisions", baseUrl: `${world.base}/api/alpha/decisions`, apiKey: "sk-or-luna-987654", auth: "bearer" as const, headers: [],
+    models: [{ id: "openai/gpt-6-luna-decisions", contextWindow: null, inputPrice: 0, outputPrice: 0, tools: null, json: null }], timeoutSeconds: 30, enabled: true,
+  });
+
+  it("recognises decisions URLs and model ids", () => {
+    expect(isDecisionsUrl("https://openrouter.ai/api/alpha/decisions")).toBe(true);
+    expect(isDecisionsUrl("https://openrouter.ai/api/v1")).toBe(false);
+    expect(isDecisionsModel("openai/gpt-6-luna-decisions")).toBe(true);
+    expect(isDecisionsModel("openai/gpt-4.1-mini")).toBe(false);
+    expect(chatBaseFromDecisions("https://openrouter.ai/api/alpha/decisions")).toBe("https://openrouter.ai/api/v1");
+    expect(decisionsUrl("https://openrouter.ai/api/alpha/decisions")).toBe("https://openrouter.ai/api/alpha/decisions");
+    const plain = { id: "x", baseUrl: "https://openrouter.ai/api/v1", models: [{ id: "openai/gpt-4.1-mini" }] };
+    expect(splitDecisions(plain)).toEqual({ provider: plain, decisions: null });
+  });
+
+  it("tests it with a decision question instead of the chat checks", async () => {
+    const before = world.decisions.length;
+    const r = await checkDecisionsConnection(pasted());
+    expect(r.ok).toBe(true);
+    expect(r.model).toBe("openai/gpt-6-luna-decisions");
+    expect(r.steps[0]!.detail).toContain(`${world.base}/api/alpha/decisions`);
+    expect(world.decisions.length).toBe(before + 1);
+    expect(world.decisions.at(-1)!.auth).toBe("Bearer sk-or-luna-987654");
+    world.ctl.status = [404];
+    const bad = await checkDecisionsConnection(pasted());
+    expect(bad.ok).toBe(false);
+    expect(bad.steps.at(-1)!.detail).toMatch(/not found \(404\)/);
+  });
+
+  it("saves it as a chat provider plus the decision model, and never as a chat model", () => {
+    saveSettings({ ai: { providers: [pasted()], main: { providerId: "luna", model: "openai/gpt-6-luna-decisions" }, decisions: { ...getSettings().ai.decisions, enabled: false } } });
+    const ai = getSettings().ai;
+    expect(ai.providers[0]).toMatchObject({ id: "luna", baseUrl: `${world.base}/api/v1`, apiKey: "sk-or-luna-987654", models: [] });
+    expect(ai.decisions).toMatchObject({ enabled: true, providerId: "luna", model: "openai/gpt-6-luna-decisions", url: "" });
+    expect(ai.main).toEqual({ providerId: "", model: "" });
+    expect(decisionsTarget()?.url).toBe(`${world.base}/api/alpha/decisions`);
+    decisionsOn();
   });
 });
 

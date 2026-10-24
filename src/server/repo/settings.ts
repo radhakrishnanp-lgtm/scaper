@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "../db";
-import { aiModelSchema, aiProviderSchema, settingsSchema, type AiProvider, type Settings } from "@/lib/schemas";
+import { aiModelSchema, aiProviderSchema, settingsSchema, type AiProvider, type ModelRef, type Settings } from "@/lib/schemas";
+import { isDecisionsModel, splitDecisions } from "@/lib/decisions-url";
 import { now, parseJson } from "./util";
 
 const SECTIONS = ["ai", "scraping", "notifications", "data", "integrations"] as const;
@@ -95,10 +96,35 @@ export function serviceAccountEmail(json: string) {
   try { return String((JSON.parse(json) as { client_email?: string }).client_email ?? "") || null; } catch { return null; }
 }
 
+/**
+ * A provider saved with OpenRouter's Decisions endpoint or a decisions model becomes a chat provider (…/api/v1, same key)
+ * and the decision model setting, since the Decisions API cannot answer chat requests.
+ */
+function moveDecisionsOut(patch: Partial<Ai>, current: Ai): Partial<Ai> {
+  let decisions = patch.decisions ? { ...current.decisions, ...patch.decisions } : undefined;
+  const providers = (patch.providers ?? []).map((p) => {
+    const split = splitDecisions(p);
+    if (!split.decisions) return p;
+    const d = split.decisions;
+    decisions = { ...(decisions ?? current.decisions), enabled: true, providerId: d.providerId, ...(d.model ? { model: d.model } : {}), ...(d.url ? { url: d.url } : {}) };
+    return split.provider;
+  });
+  if (!decisions) return { providers };
+  const chat = (r: ModelRef) => (isDecisionsModel(r.model) ? { providerId: "", model: "" } : r);
+  return {
+    providers, decisions,
+    main: chat(patch.main ?? current.main), fast: chat(patch.fast ?? current.fast),
+    fallbacks: (patch.fallbacks ?? current.fallbacks).filter((r) => !isDecisionsModel(r.model)),
+  };
+}
+
 export function saveSettings(patch: Partial<{ [K in keyof Settings]: Partial<Settings[K]> }>): Settings {
   const current = getSettings();
   const aiPatch = { ...patch.ai } as Partial<Ai>;
-  if (aiPatch.providers) aiPatch.providers = keepProviderSecrets(aiPatch.providers.map((p) => aiProviderSchema.parse(p)), current.ai.providers);
+  if (aiPatch.providers) {
+    aiPatch.providers = keepProviderSecrets(aiPatch.providers.map((p) => aiProviderSchema.parse(p)), current.ai.providers);
+    Object.assign(aiPatch, moveDecisionsOut(aiPatch, current.ai));
+  }
   const merged = settingsSchema.parse({
     ai: applyLegacyPatch({ ...current.ai, ...aiPatch }, aiPatch),
     // The proxy's password comes back masked from the form; masked means "keep the saved one".

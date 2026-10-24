@@ -11,6 +11,7 @@ import { Panel, TestButton, useSection, type S, type SettingsResponse } from "@/
 import { useToast } from "@/components/toast";
 import { Badge, Button, Callout, Checkbox, EmptyState, Field, IconButton, Input, Progress, SearchInput, Segmented, Select, Switch, Textarea } from "@/components/ui";
 import { api, ClientApiError, errorText } from "@/lib/api-client";
+import { splitDecisions } from "@/lib/decisions-url";
 import { lastDays, plural, shortDay } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
@@ -49,7 +50,7 @@ const KEY_HINTS: { re: RegExp; preset: string }[] = [
 const CONTEXT_SIZES = [32_000, 128_000, 200_000, 256_000, 1_000_000, 2_000_000];
 const tokensLabel = (n: number) => (n >= 1_000_000 ? `${n / 1_000_000}M` : `${Math.round(n / 1000)}k`);
 
-type Check = { ok: boolean; steps: { label: string; ok: boolean; detail: string }[]; models: AiModel[]; model: string | null; latencyMs: number | null; tools: boolean | null; json: boolean | null };
+type Check = { ok: boolean; steps: { label: string; ok: boolean; detail: string }[]; models: AiModel[]; model: string | null; latencyMs: number | null; tools: boolean | null; json: boolean | null; decisions?: { model: string; url: string } };
 /** What the last check covered: a change to any of these means the result no longer applies. */
 const checkKey = (p: AiProvider) => JSON.stringify([p.baseUrl, p.apiKey, p.auth, p.headers]);
 
@@ -109,8 +110,12 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
   const body = (): AiProvider => {
     const { hasApiKey: _drop, ...rest } = p;
     void _drop;
-    return { ...rest, id: rest.id || slugId(rest.name || "provider", taken), apiKey: key || rest.apiKey };
+    // A model id typed in the box but not added yet still counts, for the test and the save.
+    const typed = manual.trim();
+    const models = typed && !rest.models.some((m) => m.id === typed) ? [...rest.models, newModel(typed)] : rest.models;
+    return { ...rest, models, id: rest.id || slugId(rest.name || "provider", taken), apiKey: key || rest.apiKey };
   };
+  const split = splitDecisions(body());
 
   const loadModels = async () => {
     setListing(true); setErrors({});
@@ -222,6 +227,11 @@ function ProviderDialog({ open, initial, taken, onClose, onSave }: {
             {(f) => <Input {...f} type="password" autoComplete="off" disabled={p.auth === "none"} value={key} onChange={(e) => onKey(e.target.value)} placeholder={p.hasApiKey ? "••••••••" : p.auth === "none" ? "Not needed" : "sk-…"} />}
           </Field>
         </div>
+        {split.decisions && (
+          <Callout tone="accent" icon={<Scale className="size-4" />} title="This is OpenRouter's Decisions API">
+            It answers typed yes/no, pick-one and rating questions, not chat, so Scaper saves it in two parts: this provider as a chat provider at <span className="font-mono text-xs">{split.provider.baseUrl}</span> (your key works for chat models there too), and {split.decisions.model ? <span className="font-mono text-xs">{split.decisions.model}</span> : "your decisions model"} as the decision model below, switched on.
+          </Callout>
+        )}
         {check && <CheckResult check={check} stale={check.key !== checkKey(body())} onSaveAnyway={unchecked ? () => void save(true) : undefined} />}
         {p.hasApiKey && <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => { set({ apiKey: "", hasApiKey: false }); setKey(""); }}>Remove saved key (on save)</Button>}
 
@@ -368,6 +378,7 @@ function MemoryPanel() {
 }
 
 export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved: (s: S) => void }) {
+  const toast = useToast();
   const s = useSection(data.settings.ai, "ai", onSaved);
   const usage = useApi<Usage>("/api/ai/usage");
   const v = s.v;
@@ -387,8 +398,11 @@ export function AiSettings({ data, onSaved }: { data: SettingsResponse; onSaved:
     const next = exists ? providers.map((x) => (x.id === p.id ? p : x)) : [...providers, p];
     // The first provider with a model becomes the main one, so Scaper works right away.
     const extra: Record<string, unknown> = {};
-    if (!v.main.providerId && p.models[0]) extra.main = { providerId: p.id, model: p.models[0].id };
-    return saveProviders(next, extra);
+    const { provider: chat, decisions } = splitDecisions(p);
+    if (!v.main.providerId && chat.models[0]) extra.main = { providerId: p.id, model: chat.models[0].id };
+    const ok = await saveProviders(next, extra);
+    if (ok && decisions) toast.info("Decision model switched on", `${decisions.model || "Your decisions model"} now answers Scaper's yes/no and pick-one questions. Add a chat model to ${p.name} to use it for the agent too.`);
+    return ok;
   };
   const used = (id: string) => [v.main, v.fast, ...v.fallbacks].some((r) => r.providerId === id);
   const remove = async (p: PubProvider) => {

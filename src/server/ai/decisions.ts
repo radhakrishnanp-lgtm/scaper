@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { z } from "zod";
+import { decisionsUrl, isDecisionsModel, isDecisionsUrl, splitDecisions } from "@/lib/decisions-url";
 import type { AiProvider, DecisionSettings } from "@/lib/schemas";
 import { log } from "../log";
 import { isPrivate, workContext } from "../privacy";
@@ -76,13 +77,7 @@ const responseSchema = z.object({
   usage: z.object({ input_tokens: z.coerce.number().optional(), output_tokens: z.coerce.number().optional(), cost: z.coerce.number().optional() }).partial().nullable().optional(),
 });
 
-/** OpenRouter's base URL (…/api/v1) → its Decisions endpoint (…/api/alpha/decisions). */
-export function decisionsUrl(baseUrl: string) {
-  const u = new URL(baseUrl);
-  u.pathname = `${u.pathname.replace(/\/+$/, "").replace(/\/(chat\/completions|models)$/, "").replace(/\/v1$/, "")}/alpha/decisions`;
-  u.search = "";
-  return u.toString();
-}
+export { decisionsUrl };
 
 export type DecisionsTarget = { provider: AiProvider; model: string; url: string; settings: DecisionSettings };
 
@@ -106,8 +101,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export async function decide(input: {
   state: unknown; questions: Record<string, DecisionQuestion>; purpose: string; refId?: string | null; signal?: AbortSignal; evenIfOff?: boolean;
+  /** A provider that is not saved yet (the provider form's test). */
+  target?: DecisionsTarget;
 }): Promise<DecisionResult> {
-  const t = decisionsTarget({ evenIfOff: input.evenIfOff });
+  const t = input.target ?? decisionsTarget({ evenIfOff: input.evenIfOff });
   if (!t) throw new AiError("not_configured", "Turn on the decision model in Settings → AI and pick the provider that holds your OpenRouter key.");
   const state = stateSchema.parse(input.state);
   const questions = questionsSchema.parse(input.questions);
@@ -200,3 +197,30 @@ export const yes = (r: DecisionResult, name: string) => {
   const a = r.answers[name];
   return a?.type === "noul" ? a.noul : null;
 };
+
+/**
+ * "Test connection" for a provider that points at the Decisions API (or holds a decisions model): one yes/no
+ * question against the endpoint, shaped like a chat provider's check so the form shows it the same way.
+ */
+export async function checkDecisionsConnection(p: AiProvider, wanted?: string) {
+  const split = splitDecisions(p);
+  const model = (wanted && isDecisionsModel(wanted) ? wanted : split.decisions?.model) || getSettings().ai.decisions.model || "openai/gpt-6-luna-decisions";
+  const url = isDecisionsUrl(p.baseUrl) ? decisionsUrl(p.baseUrl) : decisionsUrl(split.provider.baseUrl);
+  const steps: { label: string; ok: boolean; detail: string }[] = [
+    { label: "Decisions API", ok: true, detail: `Sending a test question to ${url}. It has no model list or chat, so those checks are skipped.` },
+  ];
+  const target: DecisionsTarget = { provider: p, model, url, settings: getSettings().ai.decisions };
+  try {
+    const r = await decide({
+      target, purpose: "provider-check",
+      state: "Customer message: My order arrived broken and I need a replacement before Friday.",
+      questions: { urgent: { type: "noul", instructions: "Is the customer asking for something time-sensitive?", criteria: { true: "They mention a deadline or urgency", false: "No time pressure" } } },
+    });
+    const urgent = yes(r, "urgent");
+    steps.push({ label: "Model answer", ok: true, detail: `${r.model} answered a test question (yes ${urgent === null ? "not answered" : `${Math.round(urgent * 100)}%`}) in ${(r.latencyMs / 1000).toFixed(1)} s.` });
+    return { ok: true, steps, models: [], model, latencyMs: r.latencyMs, tools: null, json: null, decisions: { model, url } };
+  } catch (e) {
+    steps.push({ label: "Model answer", ok: false, detail: (e as Error).message });
+    return { ok: false, steps, models: [], model, latencyMs: null, tools: null, json: null, decisions: { model, url } };
+  }
+}
