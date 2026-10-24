@@ -1,10 +1,11 @@
 import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { runDueBots, startBotEvents } from "./ai/bots";
 import { closeBrowser } from "./fetcher/browser";
 import { enqueue, pump } from "./jobs";
 import { log } from "./log";
-import { configuredChannels, deliver } from "./notify";
+import { configuredChannels, deliver, flushHeldAlerts } from "./notify";
 import { processDueDeliveries } from "./integrations/webhooks";
 import { briefingOptions, buildBriefing } from "./ops/briefing";
 import { pruneDeliveries } from "./repo/deliveries";
@@ -106,6 +107,7 @@ async function tick() {
   try {
     if (Date.now() - state.lastMaintenance > MAINTENANCE_MS) await maintenance();
     await maybeDigest();
+    await flushHeldAlerts();
     await processDueDeliveries();
     // Keep the queue short: only claim new work when the backlog is small.
     const s = getSettings().scraping;
@@ -122,6 +124,7 @@ async function tick() {
       for (const d of searches) enqueue({ kind: "deal_search", refId: d.id, title: `Deals: ${d.name}`, trigger: "schedule", input: { dealSearchId: d.id }, unique: true });
     }
     pump();
+    runDueBots();
   } catch (e) {
     log.error("scheduler.tick_failed", { error: e as Error });
   }
@@ -132,6 +135,7 @@ export function startScheduler() {
   if (state.timer) return;
   failStaleAgentRuns();
   failStaleWorkers();
+  startBotEvents();
   state.started = new Date().toISOString();
   state.timer = setInterval(() => void tick(), TICK_MS);
   state.timer.unref?.();

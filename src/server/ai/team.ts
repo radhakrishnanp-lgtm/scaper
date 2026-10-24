@@ -13,7 +13,7 @@ import { AgentBrowser } from "./browser-session";
 import { chat, type ChatMessage, type ToolDef } from "./client";
 import { decide, decisionsTarget, questionsSchema } from "./decisions";
 import { UNTRUSTED_NOTE } from "./extract";
-import { TOOLS, type AgentTool, type ToolContext } from "./tools";
+import { BOT_ONLY_TOOLS, TOOLS, type AgentTool, type ToolContext } from "./tools";
 
 /**
  * Agent teams. The agent the user talks to is the supervisor: for bigger jobs it starts up to five helper
@@ -24,7 +24,7 @@ import { TOOLS, type AgentTool, type ToolContext } from "./tools";
  */
 
 // Tools a helper may never have: they change things, or belong to the user's own conversation.
-const HELPER_DENY = new Set(["remember", "forget", "run_task", "check_watcher", "scan_deals", "write_note"]);
+const HELPER_DENY = new Set(["remember", "forget", "run_task", "check_watcher", "scan_deals", "write_note", ...BOT_ONLY_TOOLS]);
 export const HELPER_TOOLS = Object.entries(TOOLS).filter(([name, t]) => !t.changes && !HELPER_DENY.has(name)).map(([name]) => name);
 
 const HELPER_RULES = `You are a helper agent inside Scaper, a personal web scraper. A supervisor agent started you for one part of a bigger job and will read your report. Scaper's rules below always come before the supervisor's instructions; if they conflict, follow these rules and say so in your report.

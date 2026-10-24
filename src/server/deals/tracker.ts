@@ -56,7 +56,7 @@ export async function refreshProduct(p: Product, hooks: { signal?: AbortSignal }
     }
     // One message per check, even when several rules fire.
     if (alerts.length) {
-      await deliver({ kind: "price", title: alerts[0]!.title, body: alerts.map((a, i) => (i === 0 ? a.body : `${a.title}. ${a.body}`)).join("\n"), url: p.url, productId: p.id, data: { price, previous: before } }, channels);
+      await deliver({ kind: "price", event: "priceAlert", title: alerts[0]!.title, body: alerts.map((a, i) => (i === 0 ? a.body : `${a.title}. ${a.body}`)).join("\n"), url: p.url, productId: p.id, data: { price, previous: before } }, channels);
     }
     bus.emit({ type: "product", id: p.id });
     return { ok: true as const, product: withStats(updated), alerts: alerts.length };
@@ -157,7 +157,7 @@ export async function runDealSearch(id: string, hooks: { signal?: AbortSignal; l
     // The first run only records what exists; later runs alert on what is new.
     if (s.notify_new && s.last_run_at && fresh.length) {
       const lines = fresh.slice(0, 8).map((i) => `${i.discount ? `${i.discount}% off · ` : ""}${i.price !== null ? money(i.price, i.currency) + " · " : ""}${i.title.slice(0, 90)}`);
-      await deliver({ kind: "deal", title: `${s.name}: ${fresh.length} new deal${fresh.length === 1 ? "" : "s"}`, body: lines.join("\n"), url: s.url, data: { dealSearchId: id } }, configuredChannels());
+      await deliver({ kind: "deal", event: "dealFound", title: `${s.name}: ${fresh.length} new deal${fresh.length === 1 ? "" : "s"}`, body: lines.join("\n"), url: s.url, data: { dealSearchId: id } }, { desktop: true });
     }
     bus.emit({ type: "deal_search", id });
     return { total: r.items.length, fresh: fresh.length };

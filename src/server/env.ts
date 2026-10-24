@@ -10,6 +10,8 @@ const schema = z
     PLAYWRIGHT_EXECUTABLE_PATH: z.string().optional().default(""),
     SCAPER_SCHEDULER: z.enum(["on", "off"]).default("on"),
     SCAPER_ALLOWED_HOSTS: z.string().optional().default(""),
+    // Where you open Scaper, for links in alerts (bot approvals, bot pages).
+    SCAPER_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
     // Google endpoints for Sheets sync (overridable for tests and corporate proxies).
     SCAPER_GOOGLE_TOKEN_URL: z.string().url().default("https://oauth2.googleapis.com/token"),
     SCAPER_SHEETS_API_URL: z.string().url().default("https://sheets.googleapis.com/v4"),

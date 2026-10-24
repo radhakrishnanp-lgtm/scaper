@@ -327,7 +327,7 @@ export async function checkWatcher(w: Watcher, hooks: Hooks = {}): Promise<Check
       if (diff && !["below", "above"].includes(w.condition.type)) parts.push(summarizeDiff(diff));
       if (summaryText) parts.unshift(`AI: ${summaryText}`);
       const image = visualDiff ? await readMedia(visualDiff) : screenshot ? await readMedia(screenshot) : null;
-      await deliver({ kind: "watcher", title: w.name, body: parts.filter(Boolean).join("\n"), url: w.url, watcherId: w.id, data: { value: cur.value, condition: w.condition.type, snapshotId: savedId, important, summary: summaryText }, image }, w.notify);
+      await deliver({ kind: "watcher", event: "watcherChange", title: w.name, body: parts.filter(Boolean).join("\n"), url: w.url, watcherId: w.id, data: { value: cur.value, condition: w.condition.type, snapshotId: savedId, important, summary: summaryText }, image }, w.notify);
       log("info", "Alert sent.");
     } else if (suppressed) {
       log("info", suppressed);

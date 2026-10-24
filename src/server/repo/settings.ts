@@ -147,6 +147,10 @@ export function publicSettings(s: Settings) {
       ntfyToken: mask(n.ntfyToken),
       smtpPass: n.smtpPass ? "••••••" : "",
       hasSmtpPass: Boolean(n.smtpPass),
+      whatsappToken: mask(n.whatsappToken),
+      hasWhatsappToken: Boolean(n.whatsappToken),
+      callmebotKey: mask(n.callmebotKey),
+      hasCallmebotKey: Boolean(n.callmebotKey),
     },
     data: s.data,
     integrations: {

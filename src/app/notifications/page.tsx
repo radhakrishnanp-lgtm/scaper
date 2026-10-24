@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, BadgePercent, Bell, BellOff, Bot, CheckCheck, ExternalLink, ListChecks, Radar, Settings, Tag, Trash2 } from "lucide-react";
+import { AlertTriangle, BadgePercent, Bell, BellOff, Bot, BotMessageSquare, CheckCheck, ExternalLink, ListChecks, Radar, Settings, Tag, Trash2 } from "lucide-react";
 import type { Notification } from "@/server/repo/notifications";
 import type { PublicSettings } from "@/server/repo/settings";
 import { ConfirmDialog } from "@/components/dialog";
@@ -16,11 +16,11 @@ import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
 
 type Page = { items: Notification[]; nextCursor: string | null; unread: number };
-type Kind = "all" | "watcher" | "price" | "deal" | "task" | "agent" | "system";
+type Kind = "all" | "watcher" | "price" | "deal" | "task" | "agent" | "bot" | "system";
 
 const ICON: Record<string, React.ReactNode> = {
   watcher: <Radar className="size-4" />, price: <Tag className="size-4" />, deal: <BadgePercent className="size-4" />, task: <ListChecks className="size-4" />,
-  agent: <Bot className="size-4" />, system: <AlertTriangle className="size-4" />,
+  agent: <Bot className="size-4" />, bot: <BotMessageSquare className="size-4" />, system: <AlertTriangle className="size-4" />,
 };
 
 function dayLabel(iso: string) {
@@ -138,7 +138,7 @@ function AlertsPage() {
             <FilterChips label="Read state" value={unreadOnly} onChange={setUnreadOnly} options={[{ value: "all", label: "All" }, { value: "unread", label: "Unread", count: data?.unread }]} />
             <FilterChips label="Kind" value={kind} onChange={setKind} options={[
               { value: "all", label: "Every kind" }, { value: "watcher", label: "Watchers" }, { value: "price", label: "Prices" }, { value: "deal", label: "Deals" },
-              { value: "task", label: "Tasks" }, { value: "agent", label: "Agent" }, { value: "system", label: "System" },
+              { value: "task", label: "Tasks" }, { value: "agent", label: "Agent" }, { value: "bot", label: "Bots" }, { value: "system", label: "System" },
             ]} />
           </div>
           <SearchInput value={q} onChange={setQ} placeholder="Search alerts" className="w-full xl:w-60" />

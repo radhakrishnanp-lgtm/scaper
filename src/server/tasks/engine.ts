@@ -400,7 +400,7 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
       if (o.monitor.notifyNew && diff.added.length) lines.push(`${diff.added.length} new row(s)`, ...diff.added.slice(0, 5).map((r) => `+ ${preview(r, main.columns)}`));
       if (o.monitor.notifyRemoved && diff.removed.length) lines.push(`${diff.removed.length} removed row(s)`, ...diff.removed.slice(0, 5).map((r) => `- ${preview(r, main.columns)}`));
       if (lines.length) {
-        await deliver({ kind: "task", title: `${input.taskName ?? "Task"}: ${lines[0]}`, body: lines.slice(1).join("\n") || lines[0]!, url: input.url, data: { recipeId: input.recipeId, added: diff.added.length, removed: diff.removed.length } }, o.monitor.channels);
+        await deliver({ kind: "task", event: "newRows", title: `${input.taskName ?? "Task"}: ${lines[0]}`, body: lines.slice(1).join("\n") || lines[0]!, url: input.url, data: { recipeId: input.recipeId, added: diff.added.length, removed: diff.removed.length } }, o.monitor.channels);
       }
     } else {
       log("info", "First run with change tracking: saved as the baseline.");

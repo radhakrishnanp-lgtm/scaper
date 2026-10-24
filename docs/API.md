@@ -120,6 +120,10 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | POST `/api/agent/runs/:id/helpers/:wid/stop` | Stop one helper | – |
 | GET `/api/playbooks?q` · POST `/api/playbooks` | List playbooks (best success rate first when searching) · create `{name, kind?, instructions, examples?, questions?, notes?}` | – |
 | PUT/DELETE `/api/playbooks/:id` | Save a new version (name kept) · delete | – |
+| GET `/api/bots` · POST `/api/bots` | Your bots (with `scheduleText`), the active-bot limit and what event triggers can point at (`targets`: tasks, watchers, products, deal searches) · create `{name, emoji?, role, task, instructions?, schedule: {type: manual} \| {type: interval, minutes ≥ 5} \| {type: daily, time: "HH:MM", days?: [0-6]}, triggers?: [{event: task.finished\|task.failed\|task.alert\|watcher.change\|price.alert\|deal.found, refId?}], condition?, stopWhen?, permission: read\|ask\|auto, model?, maxSteps?, helpers?, memory?, notify?, notifyMode: always\|important\|off, cooldownMinutes?}`; 409 past 20 active bots | – |
+| GET/PUT/DELETE `/api/bots/:id` | One bot with its last 40 runs (agent runs with `bot_id` and `trigger`) and its memory · change any fields or `{enabled}` (only the fields you send) · delete it and its memory (runs stay) | – |
+| POST `/api/bots/:id/run` | Run now `{}` or chat `{prompt, followUpOf?}`; 409 when it is already running, paused for its schedule, in private mode or past 100 runs today. Approvals use `/api/agent/runs/:id/approve` | – |
+| GET/POST/DELETE `/api/bots/:id/memory` · DELETE `/api/bots/:id/memory/:memId` | The bot's facts and run summaries · add or replace a fact `{key, value}` (secrets refused) · forget everything · forget one | – |
 | GET `/api/ai/usage` | Requests, tokens and cost today, this month and for 30 days, with limits and per-model stats | – |
 | GET `/api/knowledge` | What the agent knows: the full guide, its topics, any pages or tools without help, notes, recent self-reviews and their average, the notes folder | – |
 | POST `/api/knowledge/notes` · GET/PUT/DELETE `/api/knowledge/notes/:id` | Add a note `{title, kind: how-to\|site\|lesson\|reference, body}` · read · save a new version · delete (its `.md` file too). Bodies that look like keys or passwords are refused | – |
@@ -132,7 +136,7 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | POST `/api/privacy/wipe` | Delete history `{scopes, olderThanDays?}` (scrapes, agent, ai_log, ai_cache, jobs, alerts, changes, prices, logs, site_stats, memory, exports, backups, private), then compact the database | 6/min |
 | GET/POST `/api/sites` · GET/DELETE `/api/sites/:host` · POST `/api/sites/:host/reset` | Per-site rules (slower delay, mode, headers, cookies, pause) and 30-day stats · reset backoff | – |
 | GET/PUT `/api/settings` | Settings (secrets masked; a masked value sent back means "unchanged") | – |
-| POST `/api/settings/test` | Test `ai`, `ai_fast`, `webhook`, `telegram`, `discord`, `slack`, `ntfy` or `email` | 10/min |
+| POST `/api/settings/test` | Test `ai`, `ai_fast`, `webhook`, `telegram`, `discord`, `slack`, `ntfy`, `email` or `whatsapp` | 10/min |
 | GET/POST `/api/tokens` · DELETE `/api/tokens/:id` | API tokens (POST returns the token once) · revoke | – |
 | GET/POST `/api/backups` · GET/DELETE `/api/backups/:name` | List · back up now · download · delete | 4/min |
 | GET/POST `/api/config` | Export setup (tasks, watchers, products, searches, site rules; no secrets) · import it (adds, skips duplicates) | – |

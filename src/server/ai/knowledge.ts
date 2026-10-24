@@ -9,6 +9,7 @@ import { listRecipes } from "../repo/scrapes";
 import { getSettings } from "../repo/settings";
 import { listWatchers } from "../repo/watchers";
 import { listPlaybooks } from "../repo/team";
+import { listBots } from "../repo/bots";
 import { resolveModel } from "./client";
 import { SUPERVISOR_DEFS } from "./team";
 import { TOOLS } from "./tools";
@@ -32,6 +33,7 @@ export const PAGE_HELP: Record<string, string> = {
   "/watchers": "Watchers: page, selector, price, visual, JSON, RSS, sitemap and uptime monitors with rules, noise filters and diffs.",
   "/deals": "Prices & deals: tracked products with price history, deal scores, saved deal searches and price alerts.",
   "/notifications": "Alerts: the in-app inbox of every alert sent.",
+  "/bots": "Bots: the user's own bots. Each has a job, instructions, a schedule and/or events that wake it, a permission (read only, ask first, go ahead), its own memory, run history, a chat, and alert channels.",
   "/agent": "AI agent: chat with tools, approvals for changes, helper agents (team), playbooks and the knowledge screen (guide, notes, reviews).",
   "/decisions": "Decisions: the decision model's scrape check (is it OK to scrape?), link scorer (what to scrape) and playground.",
   "/ai-log": "AI log: every AI call with model, tokens, cost, time, purpose and (if enabled) the prompt.",
@@ -74,7 +76,11 @@ Cost order (cheapest first): extract_items, extract_with_selectors, read_page fa
   },
   {
     id: "alerts", title: "Alerts",
-    body: `Channels: in-app inbox (always), Telegram, email (SMTP), Discord, Slack, ntfy push, webhooks (signed). Quiet hours, digest, mute all and failure alerts are in Settings → Alerts. notify_user sends a message (asks first).`,
+    body: `Channels: in-app inbox (always), Telegram, email (SMTP), WhatsApp (Meta Cloud API, or CallMeBot to your own number), Discord, Slack, ntfy push, webhooks (signed). Each task, watcher, product and bot picks its channels; Settings → Alerts → "Where each alert goes" adds channels per kind of alert (task finished, task failed, new rows, watcher change, price alert, new deals, bot updates, bot needs your OK), where "all" means every channel that is set up. WhatsApp only allows free text within 24 hours of the user's last message to the business number; outside that window it needs an approved template. Quiet hours, digest, mute all and failure alerts are in Settings → Alerts. notify_user sends a message (asks first).`,
+  },
+  {
+    id: "bots", title: "Bots: the user's own agents with one job each",
+    body: `A bot is a named agent with a role, a job (task), optional instructions, and when it runs: manually, every N minutes (5+), daily at a time on chosen days, and/or when an event happens (task.finished, task.failed, watcher.change, price.alert, deal.found, task.alert; for one task/watcher/product/deal search or any). Optional alert condition (only message when true) and end condition (pause itself with bot_finish when true, like a monitoring task). Permission: read (only looks), ask (changes wait for the user's OK; the user gets an alert with a link), auto (changes without asking, deleting still asks). Each bot has its own memory: facts it saves with bot_memory_write and a summary of each run, shown to it at the start of every run, so it does not repeat alerts. notify_owner sends to the bot's own channels (at most 3 per run, 30 a day). Notify mode: always (each run's report), important (only notify_owner), off (inbox only). Bots cannot create, start or change bots, and a bot's messages never wake other bots. Limits: 20 active bots, 100 runs per bot per day, 3 bot runs at once, a cooldown between event runs. Private mode pauses all bots. Manage bots on the Bots page, or with list_bots, create_bot, update_bot, run_bot and delete_bot. When the user wants something checked or done repeatedly, suggest a bot.`,
   },
   {
     id: "agent", title: "How you (the agent) work",
@@ -111,7 +117,7 @@ Good answers: real data from tools, a short Markdown table with links, what you 
   },
   {
     id: "glossary", title: "A to Z",
-    body: `Approval: the OK the user gives before a change. Auto extraction: finds lists without AI. Backoff: Scaper slows down after errors from a site. Briefing: summary of changes and issues. Category scrape: one task over a shop's categories. Change: what a watcher saw. Cron: schedule format. Dataset: rows from a run. Deal score: price vs its own history. Decision model: probability answers. Dedupe: drop repeated rows by key. Detail pages: open each item for more fields. Fallback model: used when the main fails. Fast mode: HTTP without a browser. Helper: a sub-agent you start. Issue: an open problem on a task. Job: one queued unit of work. Lesson: one thing learned from a review. Memory: facts about the user. Note: your own Markdown knowledge. Playbook: reusable helper instructions. Private mode: nothing saved. Quality checks: column rules on results. Repair: AI-suggested new selectors. Robots.txt: a site's crawling rules. Run: one execution of a task. Selector: CSS path to data. Shared memory: notes for one team. Site rule: per-site politeness. Task: a saved scraper. Triage: AI marks changes important. Version: saved copy of a task. Watcher: a page monitor.`,
+    body: `Approval: the OK the user gives before a change. Auto extraction: finds lists without AI. Backoff: Scaper slows down after errors from a site. Bot: the user's own agent with one job, a schedule or events, and its own memory. Briefing: summary of changes and issues. Category scrape: one task over a shop's categories. Change: what a watcher saw. Cron: schedule format. Dataset: rows from a run. Deal score: price vs its own history. Decision model: probability answers. Dedupe: drop repeated rows by key. Detail pages: open each item for more fields. Fallback model: used when the main fails. Fast mode: HTTP without a browser. Helper: a sub-agent you start. Issue: an open problem on a task. Job: one queued unit of work. Lesson: one thing learned from a review. Memory: facts about the user. Note: your own Markdown knowledge. Playbook: reusable helper instructions. Private mode: nothing saved. Quality checks: column rules on results. Repair: AI-suggested new selectors. Robots.txt: a site's crawling rules. Run: one execution of a task. Selector: CSS path to data. Shared memory: notes for one team. Site rule: per-site politeness. Task: a saved scraper. Triage: AI marks changes important. Version: saved copy of a task. Watcher: a page monitor.`,
   },
 ];
 
@@ -136,7 +142,7 @@ function setupTopic() {
   const main = resolveModel("main");
   const fast = resolveModel("fast");
   const n = s.notifications;
-  const channels = [n.telegramBotToken && n.telegramChatId && "Telegram", n.smtpHost && n.emailTo && "email", n.discordWebhookUrl && "Discord", n.slackWebhookUrl && "Slack", n.ntfyUrl && "ntfy", n.webhookUrl && "webhook"].filter(Boolean);
+  const channels = [n.telegramBotToken && n.telegramChatId && "Telegram", n.smtpHost && n.emailTo && "email", (n.whatsappToken || n.callmebotKey) && n.whatsappTo && "WhatsApp", n.discordWebhookUrl && "Discord", n.slackWebhookUrl && "Slack", n.ntfyUrl && "ntfy", n.webhookUrl && "webhook"].filter(Boolean);
   const ctx = (r: typeof main) => (r ? `${r.provider.name} · ${r.model}${r.info.contextWindow ? ` (${r.info.contextWindow.toLocaleString("en-US")} tokens)` : ""}${r.info.tools === false ? ", no tool calling" : ""}` : "not set");
   const stats = reviewStats();
   return [
@@ -145,8 +151,13 @@ function setupTopic() {
     `Approvals: ${s.ai.agentApproval === "ask" ? "ask first" : "go ahead"}. Daily AI request limit: ${s.ai.dailyRequestLimit}${s.ai.monthlyBudget ? `, monthly budget $${s.ai.monthlyBudget}` : ""}.`,
     `Scraping browser: ${browserInstalled() ? "ready" : "not installed (Fast mode only; the user can install it in Settings → Scraping)"}. robots.txt: ${s.scraping.respectRobots ? "respected" : "off"}. Delay per site: ${s.scraping.minDelaySeconds} s. Proxy: ${s.scraping.proxyUrl ? "set" : "none (a system VPN still applies)"}.`,
     `Alert channels: ${channels.length ? channels.join(", ") : "only the in-app inbox"}. Private mode: ${s.data.privateMode ? "on" : "off"}.`,
-    `Saved: ${listRecipes().length} tasks, ${listWatchers().length} watchers, ${listProducts().length} tracked products, ${listDealSearches().length} deal searches, ${listPlaybooks().length} playbooks, ${listNotes().length} notes.`,
+    `Saved: ${listRecipes().length} tasks, ${listWatchers().length} watchers, ${listProducts().length} tracked products, ${listDealSearches().length} deal searches, ${listPlaybooks().length} playbooks, ${listNotes().length} notes, ${botLine()}.`,
   ].join("\n");
+}
+
+function botLine() {
+  const bots = listBots();
+  return bots.length ? `${bots.length} bot(s): ${bots.slice(0, 10).map((b) => `"${b.name}"${b.enabled ? "" : " (paused)"}`).join(", ")}` : "no bots";
 }
 
 function notesTopic() {

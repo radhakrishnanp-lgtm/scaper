@@ -20,6 +20,8 @@ type Row = {
   id: string; prompt: string; model: string; status: "running" | "done" | "error"; steps: string; answer: string | null;
   tokens_in: number; tokens_out: number; error: string | null; parent_id: string | null; created_at: string; updated_at: string;
   cost: number; pending: string | null; model_label: string | null;
+  /** The bot this run belongs to, and what started it (manual, schedule, chat, event:<name>). */
+  bot_id?: string | null; trigger?: string | null;
 };
 export type AgentRun = Omit<Row, "steps" | "pending"> & { steps: AgentStep[]; pending: PendingApproval | null; private?: boolean };
 const toRun = (r: Row): AgentRun => ({ ...r, steps: parseJson<AgentStep[]>(r.steps, []), pending: parseJson<PendingApproval | null>(r.pending, null) });
@@ -27,16 +29,17 @@ const toRun = (r: Row): AgentRun => ({ ...r, steps: parseJson<AgentStep[]>(r.ste
 // Private conversations stay in memory for two hours and are never written to the database.
 const privateRuns = ephemeral<AgentRun>("agent", 2 * 3600_000, 100);
 
-export function createAgentRun(prompt: string, model: string, parentId: string | null = null, opts: { private?: boolean; modelLabel?: string } = {}): AgentRun {
+export function createAgentRun(prompt: string, model: string, parentId: string | null = null, opts: { private?: boolean; modelLabel?: string; botId?: string | null; trigger?: string | null } = {}): AgentRun {
   const id = newId();
   const t = now();
   if (opts.private) {
     return privateRuns.set(id, {
       id, prompt, model, status: "running", steps: [], answer: null, tokens_in: 0, tokens_out: 0, error: null, parent_id: parentId,
-      created_at: t, updated_at: t, cost: 0, pending: null, model_label: opts.modelLabel ?? null, private: true,
+      created_at: t, updated_at: t, cost: 0, pending: null, model_label: opts.modelLabel ?? null, private: true, bot_id: opts.botId ?? null, trigger: opts.trigger ?? null,
     });
   }
-  db().prepare("INSERT INTO agent_runs (id, prompt, model, status, parent_id, created_at, updated_at, model_label) VALUES (?, ?, ?, 'running', ?, ?, ?, ?)").run(id, prompt, model, parentId, t, t, opts.modelLabel ?? null);
+  db().prepare("INSERT INTO agent_runs (id, prompt, model, status, parent_id, created_at, updated_at, model_label, bot_id, trigger) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)")
+    .run(id, prompt, model, parentId, t, t, opts.modelLabel ?? null, opts.botId ?? null, opts.trigger ?? null);
   return getAgentRun(id)!;
 }
 
@@ -83,11 +86,12 @@ export function getAgentRun(id: string): AgentRun | null {
   return r ? toRun(r) : null;
 }
 
+/** The agent page's conversations; bot runs live on each bot's page. */
 export function listAgentRuns(limit?: number, q?: string) {
-  const where = q ? "WHERE prompt LIKE ? OR answer LIKE ?" : "";
+  const where = q ? "WHERE bot_id IS NULL AND (prompt LIKE ? OR answer LIKE ?)" : "WHERE bot_id IS NULL";
   const args: unknown[] = q ? [`%${q}%`, `%${q}%`] : [];
   const saved = (db().prepare(`SELECT * FROM agent_runs ${where} ORDER BY created_at DESC LIMIT ?`).all(...args, pageSize(limit, 100, 30)) as Row[]).map(toRun);
-  const priv = privateRuns.values().filter((r) => !q || r.prompt.toLowerCase().includes(q.toLowerCase()) || (r.answer ?? "").toLowerCase().includes(q.toLowerCase()));
+  const priv = privateRuns.values().filter((r) => !r.bot_id).filter((r) => !q || r.prompt.toLowerCase().includes(q.toLowerCase()) || (r.answer ?? "").toLowerCase().includes(q.toLowerCase()));
   return [...priv, ...saved];
 }
 

@@ -12,7 +12,9 @@ export type LiveEvent =
   | { type: "product"; id: string }
   | { type: "agent"; id: string; status: string }
   | { type: "job"; id: string; status: string; kind: string; title: string; progress?: Record<string, unknown> }
-  | { type: "deal_search"; id: string };
+  | { type: "deal_search"; id: string }
+  | { type: "task_run"; id: string; recipeId: string; status: string }
+  | { type: "bot"; id: string; status: string };
 
 type Counts = { queued: number; running: number; succeeded: number; failed: number; cancelled: number };
 type LiveState = {

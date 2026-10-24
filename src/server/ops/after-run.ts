@@ -1,10 +1,12 @@
 import "server-only";
 import type { TaskOptions } from "@/lib/schemas";
 import type { ValidationReport } from "@/lib/validation";
+import { bus } from "../bus";
 import { emitWebhook } from "../integrations/webhooks";
 import { enqueue } from "../jobs/queue";
 import { deliver } from "../notify";
 import { listIssues, trackIssues } from "../repo/quality";
+import { getSettings } from "../repo/settings";
 import { getRecipe, runHistory, setHealthAlerted, setRunValidation, type ScrapeRun } from "../repo/scrapes";
 import type { RunHooks, TaskRunInput } from "../tasks/engine";
 import { queueHeal, shouldHeal } from "./heal";
@@ -32,6 +34,8 @@ export async function afterTaskRun({ run, input, options: o, validation, expecte
   const name = input.taskName ?? task.name;
   const channels = o.monitor.channels;
   const alerting = ALERTING.has(input.trigger ?? "manual");
+  // Bots can wake on finished or failed runs.
+  bus.emit({ type: "task_run", id: run.id, recipeId, name, status: run.status, rows: run.row_count, trigger: input.trigger ?? "manual" });
 
   // 1. Validation issues: new when a rule starts failing, resolved when it passes again.
   if (validation) {
@@ -66,13 +70,18 @@ export async function afterTaskRun({ run, input, options: o, validation, expecte
     if (!task.health_alerted_at && alerting) {
       setHealthAlerted(recipeId, new Date().toISOString());
       const next = run.diagnosis?.action ? `\nSuggested next step: ${run.diagnosis.action.label}.` : "";
-      await deliver({ kind: "task", title: `${name} needs attention`, body: `${problems.join("\n")}${next}`, url: task.url, data: { recipeId, runId: run.id, health: "unhealthy" } }, channels);
+      await deliver({ kind: "task", event: "taskFailed", title: `${name} needs attention`, body: `${problems.join("\n")}${next}`, url: task.url, data: { recipeId, runId: run.id, health: "unhealthy" } }, channels);
     }
   } else if (okish && task.health_alerted_at) {
     setHealthAlerted(recipeId, null);
     if (o.health.recovered) {
       await deliver({ kind: "task", title: `${name} is healthy again`, body: `The latest run worked: ${plural(run.row_count, "row")}.`, url: task.url, data: { recipeId, runId: run.id, health: "recovered" } }, { ...channels, desktop: false });
     }
+  }
+
+  // "Task finished" alerts are opt-in: Settings → Alerts → where each alert goes.
+  if (okish && getSettings().notifications.routes.taskDone.length) {
+    await deliver({ kind: "task", event: "taskDone", title: `${name} finished`, body: `${plural(run.row_count, "row")} in ${Math.max(1, Math.round(run.duration_ms / 1000))} s${run.status === "partial" ? " (some pages failed)" : ""}.`, url: task.url, data: { recipeId, runId: run.id } }, { desktop: false });
   }
 
   if (failed(run.status) && o.output.webhook) {

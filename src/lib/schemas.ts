@@ -137,9 +137,12 @@ export const notifySchema = z.object({
   slack: z.boolean().default(false),
   ntfy: z.boolean().default(false),
   email: z.boolean().default(false),
+  whatsapp: z.boolean().default(false),
 });
 export type NotifyChannels = z.infer<typeof notifySchema>;
-export const NOTIFY_CHANNELS = ["desktop", "webhook", "telegram", "discord", "slack", "ntfy", "email"] as const;
+export const NOTIFY_CHANNELS = ["desktop", "webhook", "telegram", "discord", "slack", "ntfy", "email", "whatsapp"] as const;
+export const EXTERNAL_CHANNELS = ["telegram", "ntfy", "email", "whatsapp", "discord", "slack", "webhook"] as const;
+export type ExternalChannelName = (typeof EXTERNAL_CHANNELS)[number];
 
 export const aiColumnSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(60).regex(/^[\w\- ]+$/, "Use letters, numbers, spaces, - or _"),
@@ -226,8 +229,8 @@ export const taskOptionsSchema = z.object({
     keyFields: z.array(z.string().trim().min(1).max(60)).max(5).default([]),
     notifyNew: z.boolean().default(true),
     notifyRemoved: z.boolean().default(false),
-    channels: notifySchema.default({ desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false }),
-  }).default({ enabled: false, keyFields: [], notifyNew: true, notifyRemoved: false, channels: { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false } }),
+    channels: notifySchema.default({ desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false }),
+  }).default({ enabled: false, keyFields: [], notifyNew: true, notifyRemoved: false, channels: { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false } }),
   output: z.object({
     files: z.array(z.enum(["csv", "json", "xlsx", "ndjson"])).max(4).default([]),
     webhook: z.boolean().default(false),
@@ -607,6 +610,16 @@ export const scrapingSettingsSchema = z.object({
 
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM");
 
+export const ALERT_EVENTS = ["taskDone", "taskFailed", "newRows", "watcherChange", "priceAlert", "dealFound", "botUpdate", "botApproval"] as const;
+export type AlertEvent = (typeof ALERT_EVENTS)[number];
+const routeSchema = z.array(z.enum([...EXTERNAL_CHANNELS, "all"])).max(8);
+export const DEFAULT_ROUTES: Record<AlertEvent, ("all" | ExternalChannelName)[]> = {
+  taskDone: [], taskFailed: ["all"], newRows: [], watcherChange: [], priceAlert: [], dealFound: ["all"], botUpdate: [], botApproval: ["all"],
+};
+export const alertRoutesSchema = z.object(Object.fromEntries(ALERT_EVENTS.map((e) => [e, routeSchema.default(DEFAULT_ROUTES[e])])) as Record<AlertEvent, z.ZodDefault<typeof routeSchema>>)
+  .default(DEFAULT_ROUTES);
+export type AlertRoutes = z.infer<typeof alertRoutesSchema>;
+
 export const notificationSettingsSchema = z.object({
   webhookUrl: z.string().trim().max(1000).default(""),
   telegramBotToken: z.string().trim().max(200).default(""),
@@ -622,6 +635,18 @@ export const notificationSettingsSchema = z.object({
   smtpPass: z.string().max(300).default(""),
   emailFrom: z.string().trim().max(300).default(""),
   emailTo: z.string().trim().max(1000).default(""),
+  // WhatsApp: the official Cloud API (Meta), or CallMeBot (free, for messages to your own number).
+  whatsappProvider: z.enum(["cloud", "callmebot"]).default("cloud"),
+  whatsappToken: z.string().trim().max(1000).default(""),
+  whatsappPhoneId: z.string().trim().max(40).default(""),
+  whatsappTo: z.string().trim().max(40).default(""),
+  // Outside WhatsApp's 24-hour window only an approved template can be sent; leave empty to send plain text.
+  whatsappTemplate: z.string().trim().max(120).default(""),
+  whatsappTemplateLang: z.string().trim().max(10).default("en"),
+  callmebotKey: z.string().trim().max(100).default(""),
+  // Where each kind of alert goes, on top of the channels picked on the task, watcher or product.
+  // "all" = every channel you have set up.
+  routes: alertRoutesSchema,
   quietHoursEnabled: z.boolean().default(false),
   quietStart: clock.default("22:00"),
   quietEnd: clock.default("07:00"),
@@ -699,4 +724,62 @@ export const noteInputSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(120),
   kind: z.enum(["how-to", "site", "lesson", "reference"]).default("how-to"),
   body: z.string().trim().min(1, "Write something").max(20_000),
+});
+
+// ---------------------------------------------------------------------------------------------
+// Bots: your own agents, each with one job, instructions, a schedule and/or events that wake it,
+// what it may do on its own, its own memory, and where it tells you.
+
+export const BOT_EVENTS = ["task.finished", "task.failed", "watcher.change", "price.alert", "deal.found", "task.alert"] as const;
+export type BotEvent = (typeof BOT_EVENTS)[number];
+export const MAX_ACTIVE_BOTS = 20;
+
+export const botScheduleSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("manual") }),
+  z.object({ type: z.literal("interval"), minutes: z.number().int().min(5, "At least every 5 minutes").max(10_080) }),
+  // At HH:MM on the chosen weekdays (0 = Sunday); no days = every day.
+  z.object({ type: z.literal("daily"), time: clock, days: z.array(z.number().int().min(0).max(6)).max(7).default([]) }),
+]);
+export type BotSchedule = z.infer<typeof botScheduleSchema>;
+
+export const botTriggerSchema = z.object({
+  event: z.enum(BOT_EVENTS),
+  // A task, watcher, product or deal search id; null = any.
+  refId: z.string().trim().max(60).nullable().default(null),
+});
+
+export const botSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(60),
+  emoji: z.string().trim().max(8).default("🤖"),
+  role: z.string().trim().min(3, "Say what this bot is for").max(200),
+  task: z.string().trim().min(5, "Describe the bot's job").max(4000),
+  instructions: z.string().trim().max(4000).default(""),
+  schedule: botScheduleSchema.default({ type: "manual" }),
+  triggers: z.array(botTriggerSchema).max(10).default([]),
+  // Only tell me when this is true (the bot decides from what it found).
+  condition: z.string().trim().max(500).default(""),
+  // The bot pauses itself once this is true, like a monitoring task with an end.
+  stopWhen: z.string().trim().max(500).default(""),
+  permission: z.enum(["read", "ask", "auto"]).default("ask"),
+  model: z.enum(["main", "fast"]).default("main"),
+  maxSteps: z.number().int().min(2).max(60).default(15),
+  helpers: z.boolean().default(false),
+  memory: z.boolean().default(true),
+  notify: notifySchema.default({ desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false }),
+  // always = send each run's result; important = only when the bot calls notify_owner; off = inbox only.
+  notifyMode: z.enum(["always", "important", "off"]).default("important"),
+  // Wait at least this long between runs started by events.
+  cooldownMinutes: z.number().int().min(1).max(1440).default(10),
+});
+export type BotInput = z.infer<typeof botSchema>;
+export const botPatchSchema = botSchema.partial().extend({ enabled: z.boolean().optional() });
+
+export const botMemoryInputSchema = z.object({
+  key: z.string().trim().min(1, "Name the fact").max(80),
+  value: z.string().trim().min(1, "Write the fact").max(2000),
+});
+
+export const botRunInputSchema = z.object({
+  prompt: z.string().trim().max(8000).optional(),
+  followUpOf: z.string().uuid().optional(),
 });

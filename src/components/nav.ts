@@ -1,5 +1,5 @@
 import {
-  Activity, Bell, Bot, BrainCircuit, Database, FolderTree, Gauge, Globe, Inbox, LayoutDashboard, ListChecks, Plug, Radar, Scale, ScanSearch, ScrollText, Settings, Tag,
+  Activity, Bell, Bot, BotMessageSquare, BrainCircuit, Database, FolderTree, Gauge, Globe, Inbox, LayoutDashboard, ListChecks, Plug, Radar, Scale, ScanSearch, ScrollText, Settings, Tag,
   type LucideIcon,
 } from "lucide-react";
 
@@ -38,6 +38,7 @@ export const NAV: NavGroup[] = [
     label: "Assist",
     items: [
       { href: "/agent", label: "AI agent", icon: Bot, keywords: "ai chat assistant llm" },
+      { href: "/bots", label: "Bots", icon: BotMessageSquare, keywords: "my bots automations scheduled tasks routines monitor grok openai memory" },
       { href: "/decisions", label: "Decisions", icon: Scale, keywords: "decision model openrouter ok to scrape check links what to scrape guardrail probability" },
       { href: "/ai-log", label: "AI log", icon: BrainCircuit, keywords: "llm calls tokens cost prompts usage" },
     ],

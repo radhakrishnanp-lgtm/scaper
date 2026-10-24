@@ -2,7 +2,9 @@ import "server-only";
 import { EventEmitter } from "node:events";
 
 export type BusEvent =
-  | { type: "notification"; id: string; title: string; body: string; url: string | null; desktop: boolean }
+  | { type: "notification"; id: string; title: string; body: string; url: string | null; desktop: boolean; kind?: string; event?: string | null; refId?: string | null; botId?: string | null }
+  | { type: "task_run"; id: string; recipeId: string; name: string; status: string; rows: number; trigger: string }
+  | { type: "bot"; id: string; status: string }
   | { type: "watcher"; id: string; status: string }
   | { type: "product"; id: string }
   | { type: "agent"; id: string; status: string }

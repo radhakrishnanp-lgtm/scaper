@@ -1,5 +1,5 @@
 import "server-only";
-import { TOOLS, type AgentTool } from "../ai/tools";
+import { BOT_ONLY_TOOLS, TOOLS, type AgentTool } from "../ai/tools";
 import { audit } from "../repo/events";
 import { getSettings } from "../repo/settings";
 import { withWork } from "../privacy";
@@ -22,8 +22,8 @@ type JsonRpc = { jsonrpc: "2.0"; id?: string | number | null; method?: string; p
 type RpcResponse = { jsonrpc: "2.0"; id: string | number | null; result?: unknown; error?: { code: number; message: string; data?: unknown } };
 
 const EXCLUDED_GROUPS = new Set<AgentTool["group"]>(["Browser"]);
-// Tools that only make sense inside the agent's own conversation.
-const EXCLUDED = new Set(["remember", "forget"]);
+// Tools that only make sense inside the agent's own conversation (its memory, and a bot's own memory and messages).
+const EXCLUDED = new Set(["remember", "forget", ...BOT_ONLY_TOOLS]);
 
 export function mcpTools(allowWrite = getSettings().integrations.mcpAllowWrite) {
   return Object.entries(TOOLS)

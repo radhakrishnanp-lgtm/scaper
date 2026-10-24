@@ -18,7 +18,7 @@ import type { NotifyChannels, ProductAlerts } from "@/lib/schemas";
 import { useApi } from "@/lib/use-api";
 
 type Detail = { product: ProductView; history: PricePoint[]; siblings: ProductView[] };
-const DEFAULT_CHANNELS: NotifyChannels = { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false };
+const DEFAULT_CHANNELS: NotifyChannels = { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false };
 
 function Settings({ p, onSaved }: { p: ProductView; onSaved: () => void }) {
   const toast = useToast();

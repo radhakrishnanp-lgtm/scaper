@@ -10,7 +10,7 @@ import { extractWithSelectors } from "../extract/selectors";
 import { fetchPage } from "../fetcher";
 import { parseSitemap } from "../tasks/urls";
 import { compareRows, mainDatasetIndex } from "../tasks/engine";
-import { deliver } from "../notify";
+import { configuredChannels, deliver } from "../notify";
 import { enqueueAndWait } from "../jobs";
 import { addMemory, deleteMemory, listMemory } from "../repo/ai";
 import { aiCostThisMonth, aiUsageToday } from "../repo/agent";
@@ -40,9 +40,9 @@ import { suggestSelectors } from "./suggest";
  * or send messages; in "ask first" mode the agent pauses on each of them until you allow it.
  */
 
-export type ToolContext = { browser: AgentBrowser; signal: AbortSignal; model: ModelChoice };
+export type ToolContext = { browser: AgentBrowser; signal: AbortSignal; model: ModelChoice; runId?: string; botId?: string };
 export type AgentTool = {
-  group: "Read the web" | "Browser" | "Tasks & data" | "Watchers" | "Prices & deals" | "Scaper" | "Knowledge";
+  group: "Read the web" | "Browser" | "Tasks & data" | "Watchers" | "Prices & deals" | "Scaper" | "Knowledge" | "Bots";
   changes: boolean;
   def: ToolDef;
   /** One line for the approval card: what exactly will happen. */
@@ -80,6 +80,171 @@ const extractArg = {
   type: "object",
   description: 'How to read the data. {"type":"auto"} finds lists by itself; {"type":"ai","instruction":"...","fields":[{"name":"...","type":"text|number|url|image|boolean|date|list"}]} lets the AI read each page; {"type":"selectors","itemSelector":"...","fields":[{"name":"...","selector":"...","attr":"text|href|src"}]} uses CSS selectors (get them from suggest_selectors).',
 };
+
+// ---------------------------------------------------------------------------------------------
+// Bots: the main agent can create and manage your bots; a bot run gets its own memory and alert tools.
+
+const NOTIFY_PER_RUN = 3;
+const NOTIFY_PER_DAY = 30;
+const ng = globalThis as unknown as { __scaperBotNotify?: Map<string, number> };
+const notifyCounts = (ng.__scaperBotNotify ??= new Map());
+
+function needBot(ctx: ToolContext) {
+  if (!ctx.botId) throw new Error("Only a bot can use this tool.");
+  return ctx.botId;
+}
+
+const scheduleArg = { type: "object", description: "When it runs: {type:\"manual\"}, {type:\"interval\", minutes: 5+} or {type:\"daily\", time:\"HH:MM\", days:[0-6, optional, 0 = Sunday]}" };
+const triggersArg = { type: "array", description: "Events that wake it: [{event: task.finished | task.failed | watcher.change | price.alert | deal.found | task.alert, refId: id of the task/watcher/product/deal search, or null for any}]", items: { type: "object" } };
+const channelsArg = { type: "array", items: { type: "string", enum: ["telegram", "ntfy", "email", "whatsapp", "discord", "slack", "webhook"] }, description: "Where it tells the user, besides the in-app inbox" };
+
+function botFields(a: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const k of ["name", "emoji", "role", "task", "instructions", "condition", "stopWhen", "permission", "model", "notifyMode"]) if (typeof a[k] === "string") out[k] = a[k];
+  if (a.schedule && typeof a.schedule === "object") out.schedule = a.schedule;
+  if (Array.isArray(a.triggers)) out.triggers = a.triggers;
+  if (typeof a.maxSteps === "number") out.maxSteps = a.maxSteps;
+  if (typeof a.helpers === "boolean") out.helpers = a.helpers;
+  if (Array.isArray(a.channels)) out.notify = Object.fromEntries(["desktop", "webhook", "telegram", "discord", "slack", "ntfy", "email", "whatsapp"].map((c) => [c, c === "desktop" || (a.channels as string[]).includes(c)]));
+  return out;
+}
+
+function BOT_TOOLS(): Record<string, AgentTool> {
+  return {
+    list_bots: {
+      group: "Bots", changes: false,
+      def: def("list_bots", "List the user's bots: name, job, schedule, events, permission, whether it is on, and its last run.", {}),
+      run: async () => {
+        const { listBots, describeSchedule } = await import("../repo/bots");
+        return j(listBots().map((b) => ({ id: b.id, name: b.name, role: b.role, task: b.task.slice(0, 200), schedule: describeSchedule(b.schedule), triggers: b.triggers, permission: b.permission, enabled: b.enabled, running: b.running, last_run_at: b.last_run_at, last_status: b.last_status, next_run_at: b.next_run_at, finished: b.finished_reason })));
+      },
+    },
+    create_bot: {
+      group: "Bots", changes: true,
+      describe: (a) => `Create the bot "${short(a.name)}": ${short(a.task, 120)}`,
+      def: def("create_bot", "Create a bot for the user: a named agent with one job that runs on a schedule and/or when something happens (a task finishes or fails, a watcher sees a change, a price or deal alert), keeps its own memory and alerts the user. Use when the user wants something done repeatedly or watched.", {
+        name: str("Short name"), emoji: str("One emoji"), role: str("What the bot is for, one line"), task: str("Its job, in full: what to check or do each run and what to report"),
+        instructions: str("How to do it (optional)"), schedule: scheduleArg, triggers: triggersArg,
+        condition: str("Only alert when this is true (optional)"), stopWhen: str("Pause itself when this is true (optional)"),
+        permission: { type: "string", enum: ["read", "ask", "auto"], description: "read = only looks; ask = changes wait for the user's OK (default); auto = changes without asking, except deleting" },
+        model: { type: "string", enum: ["main", "fast"] }, channels: channelsArg, notifyMode: { type: "string", enum: ["always", "important", "off"], description: "always = send every run's result; important = only when it calls notify_owner (default)" },
+      }, ["name", "role", "task"]),
+      run: async (a) => {
+        const { createBot, describeSchedule } = await import("../repo/bots");
+        const b = createBot(botFields(a) as Parameters<typeof createBot>[0]);
+        audit("bot.created", { botId: b.id, by: "agent" });
+        return j({ created: b.name, id: b.id, schedule: describeSchedule(b.schedule), next_run_at: b.next_run_at, page: `/bots/${b.id}` });
+      },
+    },
+    update_bot: {
+      group: "Bots", changes: true,
+      describe: (a) => `${a.enabled === false ? "Pause" : a.enabled === true ? "Turn on" : "Change"} the bot "${short(a.bot)}"`,
+      def: def("update_bot", "Change one of the user's bots (any field), or pause (enabled false) or resume it (enabled true).", {
+        bot: str("Bot name or id"), enabled: bool("On or paused"), name: str("New name"), role: str("Role"), task: str("Job"), instructions: str("Instructions"),
+        schedule: scheduleArg, triggers: triggersArg, condition: str("Alert condition"), stopWhen: str("End condition"),
+        permission: { type: "string", enum: ["read", "ask", "auto"] }, channels: channelsArg, notifyMode: { type: "string", enum: ["always", "important", "off"] },
+      }, ["bot"]),
+      run: async (a) => {
+        const { getBot, updateBot, describeSchedule } = await import("../repo/bots");
+        const cur = getBot(String(a.bot ?? ""));
+        if (!cur) throw new Error(`No bot called "${String(a.bot ?? "")}". Use list_bots.`);
+        const b = updateBot(cur.id, { ...botFields(a), ...(typeof a.enabled === "boolean" ? { enabled: a.enabled } : {}) });
+        audit("bot.updated", { botId: b.id, by: "agent" });
+        return j({ updated: b.name, enabled: b.enabled, schedule: describeSchedule(b.schedule), next_run_at: b.next_run_at });
+      },
+    },
+    run_bot: {
+      group: "Bots", changes: true,
+      describe: (a) => `Run the bot "${short(a.bot)}" now`,
+      def: def("run_bot", "Start one of the user's bots now. It runs in the background; its result appears on its page and in its alerts.", { bot: str("Bot name or id"), prompt: str("Optional extra request for this run") }, ["bot"]),
+      run: async (a) => {
+        const { getBot } = await import("../repo/bots");
+        const { runBot } = await import("./bots");
+        const b = getBot(String(a.bot ?? ""));
+        if (!b) throw new Error(`No bot called "${String(a.bot ?? "")}". Use list_bots.`);
+        const run = runBot(b.id, { trigger: "manual", prompt: a.prompt ? String(a.prompt) : undefined });
+        return j({ started: b.name, runId: run.id, page: `/bots/${b.id}` });
+      },
+    },
+    delete_bot: {
+      group: "Bots", changes: true,
+      describe: (a) => `Delete the bot "${short(a.bot)}" and its memory`,
+      def: def("delete_bot", "Delete one of the user's bots and its memory. Its past runs stay in the history.", { bot: str("Bot name or id") }, ["bot"]),
+      run: async (a) => {
+        const { getBot, deleteBot } = await import("../repo/bots");
+        const b = getBot(String(a.bot ?? ""));
+        if (!b) throw new Error(`No bot called "${String(a.bot ?? "")}".`);
+        deleteBot(b.id);
+        audit("bot.deleted", { botId: b.id, by: "agent" });
+        return j({ deleted: b.name });
+      },
+    },
+
+    // Only inside a bot's own run
+    bot_memory_read: {
+      group: "Bots", changes: false,
+      def: def("bot_memory_read", "Read your own memory as this bot: the facts you saved and short summaries of your recent runs. Search with query.", { query: str("Optional words to look for") }),
+      run: async (a, ctx) => {
+        const { listBotMemory } = await import("../repo/bots");
+        const q = String(a.query ?? "").toLowerCase().trim();
+        const rows = listBotMemory(needBot(ctx)).filter((m) => !q || `${m.key} ${m.value}`.toLowerCase().includes(q));
+        return j({ facts: rows.filter((m) => m.kind === "fact").map((m) => ({ key: m.key, value: m.value, updated: m.updated_at })), runs: rows.filter((m) => m.kind === "run").slice(0, 10).map((m) => ({ when: m.updated_at, summary: m.value })) });
+      },
+    },
+    bot_memory_write: {
+      group: "Bots", changes: false,
+      def: def("bot_memory_write", "Save or update one fact in your own memory as this bot, for your next runs: the last price you saw, items you already reported, what the user prefers. Same key = replaced. No secrets.", { key: str("Short name, e.g. last_price or reported_ids"), value: str("The fact") }, ["key", "value"]),
+      run: async (a, ctx) => {
+        const { rememberFact } = await import("../repo/bots");
+        const m = rememberFact(needBot(ctx), String(a.key ?? ""), String(a.value ?? ""));
+        return j({ saved: m.key });
+      },
+    },
+    bot_memory_forget: {
+      group: "Bots", changes: false,
+      def: def("bot_memory_forget", "Remove one fact from your own memory as this bot.", { key: str("The fact's key") }, ["key"]),
+      run: async (a, ctx) => {
+        const { forgetFact } = await import("../repo/bots");
+        if (!forgetFact(needBot(ctx), String(a.key ?? ""))) throw new Error(`You have no fact called "${String(a.key ?? "")}".`);
+        return j({ forgot: String(a.key) });
+      },
+    },
+    notify_owner: {
+      group: "Bots", changes: false,
+      def: def("notify_owner", "Send the user a message on this bot's alert channels (Telegram, WhatsApp, email, ntfy and so on): only for something worth a message, matching your alert condition. At most 3 per run.", { title: str("Short title"), body: str("The message, plain text, with links"), url: str("Optional link") }, ["title", "body"]),
+      run: async (a, ctx) => {
+        const botId = needBot(ctx);
+        const { getBot } = await import("../repo/bots");
+        const { botAlert } = await import("./bots");
+        const b = getBot(botId);
+        if (!b) throw new Error("This bot was deleted.");
+        const day = new Date().toISOString().slice(0, 10);
+        const runKey = `run:${ctx.runId}`;
+        const dayKey = `day:${botId}:${day}`;
+        if ((notifyCounts.get(runKey) ?? 0) >= NOTIFY_PER_RUN) throw new Error(`You already sent ${NOTIFY_PER_RUN} messages in this run. Put the rest in your final report.`);
+        if ((notifyCounts.get(dayKey) ?? 0) >= NOTIFY_PER_DAY) throw new Error(`This bot already sent ${NOTIFY_PER_DAY} messages today. Put it in your final report.`);
+        notifyCounts.set(runKey, (notifyCounts.get(runKey) ?? 0) + 1);
+        notifyCounts.set(dayKey, (notifyCounts.get(dayKey) ?? 0) + 1);
+        const url = a.url ? String(a.url).slice(0, 500) : null;
+        await botAlert(b, { title: String(a.title ?? "").slice(0, 120), body: String(a.body ?? "").slice(0, 1500), url, event: "botUpdate", runId: ctx.runId ?? null });
+        return j({ sent: true, channels: b.notifyMode === "off" ? ["inbox"] : ["inbox", ...Object.entries(b.notify).filter(([k, v]) => v && k !== "desktop").map(([k]) => k)] });
+      },
+    },
+    bot_finish: {
+      group: "Bots", changes: false,
+      def: def("bot_finish", "As this bot, stop for good because your end condition is met (for example the price reached the target). You are paused until the user turns you on again.", { reason: str("What happened") }, ["reason"]),
+      run: async (a, ctx) => {
+        const botId = needBot(ctx);
+        const { getBot, finishBot } = await import("../repo/bots");
+        const b = getBot(botId);
+        if (!b?.stopWhen) throw new Error("You have no end condition, so you keep running. Report instead.");
+        finishBot(botId, String(a.reason ?? "Done").slice(0, 500));
+        audit("bot.finished", { botId, reason: String(a.reason ?? "").slice(0, 200) });
+        return j({ paused: true });
+      },
+    },
+  };
+}
 
 export const TOOLS: Record<string, AgentTool> = {
   // Read the web
@@ -552,7 +717,7 @@ export const TOOLS: Record<string, AgentTool> = {
     describe: (a) => `Send you an alert: "${short(a.title, 80)}" (to your inbox and alert channels).`,
     def: def("notify_user", "Send the user an alert in Scaper and their alert channels.", { title: str("Title"), body: str("Message") }, ["title", "body"]),
     run: async (a) => {
-      await deliver({ kind: "agent", title: String(a.title).slice(0, 120), body: String(a.body).slice(0, 1500) }, { desktop: true, webhook: false, telegram: false });
+      await deliver({ kind: "agent", title: String(a.title).slice(0, 120), body: String(a.body).slice(0, 1500) }, { ...configuredChannels(), desktop: true });
       return "Alert sent.";
     },
   },
@@ -665,9 +830,15 @@ export const TOOLS: Record<string, AgentTool> = {
       return j({ deleted: String(a.name) });
     },
   },
+  ...BOT_TOOLS(),
 };
 
-export const TOOL_DEFS: ToolDef[] = Object.values(TOOLS).map((t) => t.def);
+/** Tools only a bot run gets (they act on that bot's own memory and channels). */
+export const BOT_ONLY_TOOLS = new Set(["bot_memory_read", "bot_memory_write", "bot_memory_forget", "notify_owner", "bot_finish"]);
+/** Bots cannot create, change, start or delete bots, so one bot can never set off another in a loop. */
+export const NOT_FOR_BOTS = new Set(["create_bot", "update_bot", "run_bot", "delete_bot"]);
+
+export const TOOL_DEFS: ToolDef[] = Object.entries(TOOLS).filter(([n]) => !BOT_ONLY_TOOLS.has(n)).map(([, t]) => t.def);
 
 /** For the agent page: what the agent can do, grouped, and which tools need your OK. */
 export function toolCatalog() {
@@ -677,4 +848,5 @@ export function toolCatalog() {
 export function memoryForPrompt() {
   return listMemory().map((n) => `- ${n.text} (id ${n.id})`).join("\n");
 }
+
 

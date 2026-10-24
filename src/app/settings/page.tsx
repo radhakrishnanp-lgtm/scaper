@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Bookmark, Bot, Database, EyeOff, Download, FileUp, Globe, HardDrive, Info, KeyRound, Mail, MessageCircle, Newspaper, Plus, Save, Send, ShieldCheck, Smartphone, Trash2, Webhook, Hash } from "lucide-react";
+import { Bell, Bookmark, Bot, Database, EyeOff, Download, FileUp, Globe, HardDrive, Info, KeyRound, Mail, MessageCircle, MessageSquareText, Newspaper, Plus, Route, Save, Send, ShieldCheck, Smartphone, Trash2, Webhook, Hash } from "lucide-react";
+import type { AlertEvent, AlertRoutes, ExternalChannelName } from "@/lib/schemas";
 import { Panel, TestButton, useSection, type S, type SettingsResponse } from "@/components/settings-bits";
 import { AiSettings } from "@/components/ai-settings";
 import { BrowserSetup } from "@/components/browser-setup";
@@ -92,13 +93,66 @@ function NetworkSection({ value, proxyAi, error, onChange }: { value: string; pr
 
 const savedUrlHint = (v: string) => (v.includes("••••") ? "Saved and hidden. Paste a full new URL to replace it, or clear it to remove." : undefined);
 
+const ROUTE_ROWS: { key: AlertEvent; label: string; hint: string }[] = [
+  { key: "taskDone", label: "A task finished", hint: "Every successful run. Off unless you pick channels." },
+  { key: "taskFailed", label: "A task needs attention", hint: "Failures, too few rows, too slow." },
+  { key: "newRows", label: "New or removed rows", hint: "Tasks with change alerts on." },
+  { key: "watcherChange", label: "A watcher saw a change", hint: "" },
+  { key: "priceAlert", label: "Price alert", hint: "Tracked products." },
+  { key: "dealFound", label: "New deals", hint: "Saved deal searches." },
+  { key: "botUpdate", label: "Bot messages", hint: "Reports and findings from your bots." },
+  { key: "botApproval", label: "A bot needs your OK", hint: "So a waiting bot does not time out." },
+];
+const ROUTE_CHANNELS: { key: ExternalChannelName; label: string }[] = [
+  { key: "telegram", label: "Telegram" }, { key: "whatsapp", label: "WhatsApp" }, { key: "ntfy", label: "ntfy" }, { key: "email", label: "Email" },
+  { key: "discord", label: "Discord" }, { key: "slack", label: "Slack" }, { key: "webhook", label: "Webhook" },
+];
+
+/** Settings → Alerts → where each kind of alert goes, on top of what each task, watcher, product or bot picks. */
+function RoutesPanel({ value, onChange, footer, configured }: { value: AlertRoutes; onChange: (v: AlertRoutes) => void; footer: React.ReactNode; configured: Record<ExternalChannelName, boolean> }) {
+  const toggle = (ev: AlertEvent, c: ExternalChannelName | "all") => {
+    const cur = value[ev] ?? [];
+    const next = cur.includes(c) ? cur.filter((x) => x !== c) : c === "all" ? ["all" as const] : [...cur.filter((x) => x !== "all"), c];
+    onChange({ ...value, [ev]: next });
+  };
+  return (
+    <Panel title="Where each alert goes" icon={<Route className="size-4 text-muted" />} footer={footer}
+      description="Added to the channels you pick on each task, watcher, product or bot. “All” means every channel you have set up. The inbox always gets everything.">
+      <div className="scroll-thin overflow-x-auto">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead><tr className="text-left text-xs text-muted"><th className="py-2 pr-3 font-medium">Alert</th><th className="px-1 py-2 text-center font-medium">All</th>{ROUTE_CHANNELS.map((c) => <th key={c.key} className="px-1 py-2 text-center font-medium">{c.label}</th>)}</tr></thead>
+          <tbody className="divide-y divide-border">
+            {ROUTE_ROWS.map((r) => {
+              const cur = value[r.key] ?? [];
+              const all = cur.includes("all");
+              return (
+                <tr key={r.key}>
+                  <td className="py-2 pr-3"><p className="font-medium">{r.label}</p>{r.hint && <p className="text-xs text-muted">{r.hint}</p>}</td>
+                  <td className="px-1 py-2 text-center"><input type="checkbox" className="size-4 accent-[var(--accent)]" aria-label={`${r.label}: all channels`} checked={all} onChange={() => toggle(r.key, "all")} /></td>
+                  {ROUTE_CHANNELS.map((c) => (
+                    <td key={c.key} className="px-1 py-2 text-center">
+                      <input type="checkbox" className="size-4 accent-[var(--accent)] disabled:opacity-40" aria-label={`${r.label}: ${c.label}`} disabled={all} title={configured[c.key] ? undefined : `${c.label} is not set up yet`}
+                        checked={all ? configured[c.key] : cur.includes(c.key)} onChange={() => toggle(r.key, c.key)} />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function AlertsTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
   const s = useSection(data.settings.notifications, "notifications", onSaved);
-  const [secrets, setSecrets] = useState({ telegramBotToken: "", ntfyToken: "", smtpPass: "" });
+  const empty = { telegramBotToken: "", ntfyToken: "", smtpPass: "", whatsappToken: "", callmebotKey: "" };
+  const [secrets, setSecrets] = useState(empty);
   const v = s.v;
   const save = async () => {
     const extra = Object.fromEntries(Object.entries(secrets).filter(([, x]) => x));
-    if (await s.save(extra)) setSecrets({ telegramBotToken: "", ntfyToken: "", smtpPass: "" });
+    if (await s.save(extra)) setSecrets(empty);
   };
   const saveBtn = <Button icon={<Save className="size-4" />} loading={s.saving} onClick={save}>Save</Button>;
   return (
@@ -119,6 +173,12 @@ function AlertsTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
           <Field label="Repeat a failure alert after (min)">{(p) => <Input {...p} type="number" min={0} value={v.errorAlertCooldownMinutes} onChange={(e) => s.set({ errorAlertCooldownMinutes: Number(e.target.value) || 0 })} />}</Field>
         </div>
       </Panel>
+
+      <RoutesPanel value={v.routes} onChange={(routes) => s.set({ routes })} footer={saveBtn} configured={{
+        telegram: Boolean(v.hasTelegramToken && v.telegramChatId), ntfy: Boolean(v.ntfyUrl), email: Boolean(v.smtpHost && v.emailTo),
+        whatsapp: v.whatsappProvider === "callmebot" ? Boolean(v.hasCallmebotKey && v.whatsappTo) : Boolean(v.hasWhatsappToken && v.whatsappPhoneId && v.whatsappTo),
+        discord: Boolean(v.discordWebhookUrl), slack: Boolean(v.slackWebhookUrl), webhook: Boolean(v.webhookUrl),
+      }} />
 
       <Panel title="Briefing" icon={<Newspaper className="size-4 text-muted" />} description="A summary of what your watchers saw, tasks that need attention and price alerts, sent to your channels on a schedule."
         footer={<><Link prefetch={false} href="/changes"><Button variant="ghost">Preview in Changes</Button></Link>{saveBtn}</>}>
@@ -154,6 +214,27 @@ function AlertsTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
             <Field label="To">{(p) => <Input {...p} value={v.emailTo} onChange={(e) => s.set({ emailTo: e.target.value })} placeholder="me@example.com" />}</Field>
           </div>
           <Switch label="Use TLS from the start (port 465)" checked={v.smtpSecure} onChange={(x) => s.set({ smtpSecure: x })} />
+        </Panel>
+        <Panel title="WhatsApp" icon={<MessageSquareText className="size-4 text-muted" />} footer={<><TestButton channel="whatsapp" />{saveBtn}</>}
+          description={v.whatsappProvider === "cloud"
+            ? "Meta's WhatsApp Cloud API with your WhatsApp Business number. WhatsApp only allows free text within 24 hours of your last message to that number; for alerts at any time, add an approved message template with one {{1}} variable."
+            : "CallMeBot: free, sends only to your own number. Message the CallMeBot number once to get your API key (see callmebot.com)."}>
+          <Field label="Send with">{(p) => <Select {...p} value={v.whatsappProvider} onChange={(e) => s.set({ whatsappProvider: e.target.value as typeof v.whatsappProvider })}><option value="cloud">WhatsApp Cloud API (Meta)</option><option value="callmebot">CallMeBot (free, own number)</option></Select>}</Field>
+          <Field label="Your WhatsApp number" hint="With the country code, for example +919876543210.">{(p) => <Input {...p} value={v.whatsappTo} onChange={(e) => s.set({ whatsappTo: e.target.value })} placeholder="+919876543210" />}</Field>
+          {v.whatsappProvider === "cloud" ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Access token" hint={v.hasWhatsappToken ? `Saved (${v.whatsappToken}).` : "A permanent token of a system user."}>{(p) => <Input {...p} type="password" autoComplete="off" value={secrets.whatsappToken} onChange={(e) => setSecrets({ ...secrets, whatsappToken: e.target.value })} placeholder={v.hasWhatsappToken ? "••••••••" : "EAAG…"} />}</Field>
+                <Field label="Phone number ID" hint="WhatsApp → API setup in your Meta app.">{(p) => <Input {...p} value={v.whatsappPhoneId} onChange={(e) => s.set({ whatsappPhoneId: e.target.value })} placeholder="1234567890" />}</Field>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[1fr_100px]">
+                <Field label="Template name (optional)" hint="Empty = plain text (works within the 24-hour window).">{(p) => <Input {...p} value={v.whatsappTemplate} onChange={(e) => s.set({ whatsappTemplate: e.target.value })} placeholder="scaper_alert" />}</Field>
+                <Field label="Language">{(p) => <Input {...p} value={v.whatsappTemplateLang} onChange={(e) => s.set({ whatsappTemplateLang: e.target.value })} placeholder="en" />}</Field>
+              </div>
+            </>
+          ) : (
+            <Field label="CallMeBot API key" hint={v.hasCallmebotKey ? `Saved (${v.callmebotKey}).` : undefined}>{(p) => <Input {...p} type="password" autoComplete="off" value={secrets.callmebotKey} onChange={(e) => setSecrets({ ...secrets, callmebotKey: e.target.value })} placeholder={v.hasCallmebotKey ? "••••••••" : "123456"} />}</Field>
+          )}
         </Panel>
         <Panel title="Discord" icon={<MessageCircle className="size-4 text-muted" />} description="Channel settings → Integrations → Webhooks." footer={<><TestButton channel="discord" />{saveBtn}</>}>
           <Field label="Webhook URL" hint={savedUrlHint(v.discordWebhookUrl)}>{(p) => <Input {...p} className="font-mono text-xs" value={v.discordWebhookUrl} onChange={(e) => s.set({ discordWebhookUrl: e.target.value })} placeholder="https://discord.com/api/webhooks/…" />}</Field>

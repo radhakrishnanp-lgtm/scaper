@@ -28,7 +28,7 @@ type Status = "all" | "ok" | "error" | "cached";
 const PURPOSES: Record<string, string> = {
   agent: "Agent", extract: "AI extraction", fields: "Field suggestions", columns: "AI columns", selectors: "Selector suggestions", plan: "Category planning",
   heal: "Fix with AI", watcher: "Watcher triage", deals: "Deal ranking", test: "Tests", chat: "Other", briefing: "Briefings", rules: "Data check suggestions",
-  team: "Helper agents", review: "Self-review",
+  team: "Helper agents", review: "Self-review", bot: "Bots",
   "decide:scrape-check": "Decision: OK to scrape?", "decide:links": "Decision: which links", "decide:agent-guard": "Decision: agent guardrail", "decide:playground": "Decision playground", "decide:test": "Decision test",
 };
 const money = (v: number) => (v >= 1 ? `$${v.toFixed(2)}` : v > 0 ? `$${v.toFixed(4)}` : "$0");

@@ -18,7 +18,7 @@ import { UNTRUSTED_NOTE } from "./extract";
 import { guideSummary } from "./knowledge";
 import { reviewRun } from "./review";
 import { SUPERVISOR_DEFS, TEAM_PROMPT, isSupervisorTool, runSupervisorTool, stopTeam } from "./team";
-import { TOOL_DEFS, TOOLS, memoryForPrompt } from "./tools";
+import { BOT_ONLY_TOOLS, NOT_FOR_BOTS, TOOLS, memoryForPrompt } from "./tools";
 
 const RULES = `You are Scaper's agent. You work for one person, on their own computer, using their own AI model. You can read websites, extract data, run and save scraping tasks, watch pages, track prices, find deals and manage Scaper, using the tools provided.
 How to work:
@@ -50,7 +50,7 @@ function scaperSnapshot() {
 }
 
 /** The system prompt: rules, the user's own instructions and memory, the date, and what is in Scaper right now. */
-export function buildSystemPrompt(opts: { private: boolean; approval: "ask" | "auto" }) {
+export function buildSystemPrompt(opts: { private: boolean; approval: "ask" | "auto"; team?: boolean }) {
   const ai = getSettings().ai;
   const memory = memoryForPrompt();
   const nowText = new Intl.DateTimeFormat("en-IN", { dateStyle: "full", timeStyle: "short" }).format(new Date());
@@ -64,7 +64,7 @@ export function buildSystemPrompt(opts: { private: boolean; approval: "ask" | "a
     guideSummary(),
     opts.approval === "ask" ? "Actions that change things wait for the user's OK automatically; just call the tool." : "The user allowed you to make changes without asking; still only do what they asked for.",
     opts.private ? "This conversation is private: nothing is saved to disk. Do not use remember. Helper agents are not available in private conversations." : "",
-    !opts.private && ai.team.enabled ? TEAM_PROMPT(ai.team.maxAgents) : "",
+    !opts.private && ai.team.enabled && opts.team !== false ? TEAM_PROMPT(ai.team.maxAgents) : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -102,7 +102,23 @@ function digest(run: AgentRun) {
   return tools.length ? `[Tools used: ${tools.join("; ")}]\n\n` : "";
 }
 
-export type StartAgentInput = { prompt: string; model: ModelChoice; followUpOf?: string; private?: boolean };
+/** A run on behalf of one of your bots: its own prompt section, permissions, step limit and hooks. */
+export type BotRunOptions = {
+  botId: string; trigger: string; system: string; permission: "read" | "ask" | "auto"; maxSteps: number; helpers: boolean;
+  onPending?: (run: AgentRun, pending: PendingApproval) => void | Promise<void>;
+  onDone?: (run: AgentRun) => void | Promise<void>;
+};
+export type StartAgentInput = { prompt: string; model: ModelChoice; followUpOf?: string; private?: boolean; bot?: BotRunOptions };
+
+/** Which tools a run gets: bots get their memory and notify tools but cannot manage bots; read-only bots only read. */
+export function toolsFor(opts: { bot?: Pick<BotRunOptions, "permission"> | null; team: boolean }) {
+  const names = Object.entries(TOOLS).filter(([name, t]) => {
+    if (opts.bot) return !NOT_FOR_BOTS.has(name) && (opts.bot.permission !== "read" || !t.changes);
+    return !BOT_ONLY_TOOLS.has(name);
+  }).map(([name]) => name);
+  const defs = [...names.map((n) => TOOLS[n]!.def), ...(opts.team ? SUPERVISOR_DEFS : [])];
+  return { names: new Set(names), defs };
+}
 
 /** Starts an agent run in the background and returns it at once; the page polls for steps. */
 export function startAgent(input: StartAgentInput) {
@@ -110,7 +126,8 @@ export function startAgent(input: StartAgentInput) {
   if (!resolved) throw new AiError("not_configured", "Add an AI provider and choose a model in Settings → AI first.");
   const settings = getSettings();
   const parent = input.followUpOf ? getAgentRun(input.followUpOf) : null;
-  const priv = Boolean(input.private ?? settings.data.privateMode) || Boolean(parent?.private);
+  const bot = input.bot ?? null;
+  const priv = bot ? false : Boolean(input.private ?? settings.data.privateMode) || Boolean(parent?.private);
   // Earlier turns go in as question / answer pairs with a short list of the tools used, so follow-ups know what was done.
   const history: ChatMessage[] = parent
     ? [...agentThread(parent.id, 6), parent].flatMap((r) => [
@@ -118,11 +135,14 @@ export function startAgent(input: StartAgentInput) {
       { role: "assistant" as const, content: digest(r) + (r.answer ?? (r.error ? `(That request failed: ${r.error})` : "(no answer)")) },
     ])
     : [];
-  const run = createAgentRun(input.prompt, resolved.model, parent?.id ?? null, { private: priv, modelLabel: modelLabel(resolved) });
-  audit("agent.started", { runId: run.id, model: resolved.model, followUp: Boolean(parent) });
-  const approval = settings.ai.agentApproval;
-  void withWork({ private: priv, purpose: "agent", refId: run.id }, () =>
-    loop(run.id, [{ role: "system", content: buildSystemPrompt({ private: priv, approval }) }, ...history, { role: "user", content: input.prompt }], input.model, settings.ai.agentMaxSteps, approval));
+  const run = createAgentRun(input.prompt, resolved.model, parent?.id ?? null, { private: priv, modelLabel: modelLabel(resolved), botId: bot?.botId ?? null, trigger: bot?.trigger ?? null });
+  audit("agent.started", { runId: run.id, model: resolved.model, followUp: Boolean(parent), ...(bot ? { botId: bot.botId, trigger: bot.trigger } : {}) });
+  // A bot's "go ahead" still asks before deleting (the guardrail); "read only" never gets a tool that changes things.
+  const approval = bot ? (bot.permission === "auto" ? "auto" : "ask") : settings.ai.agentApproval;
+  const team = settings.ai.team.enabled && !priv && (!bot || bot.helpers);
+  const system = [buildSystemPrompt({ private: priv, approval, team }), bot?.system].filter(Boolean).join("\n\n");
+  void withWork({ private: priv, purpose: bot ? "bot" : "agent", refId: run.id }, () =>
+    loop(run.id, [{ role: "system", content: system }, ...history, { role: "user", content: input.prompt }], input.model, bot?.maxSteps ?? settings.ai.agentMaxSteps, approval, { bot, team }));
   return run;
 }
 
@@ -138,7 +158,7 @@ function fitToBudget(messages: ChatMessage[], budget: number) {
   }
 }
 
-async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, maxSteps: number, approval: "ask" | "auto") {
+async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, maxSteps: number, approval: "ask" | "auto", opts: { bot: BotRunOptions | null; team: boolean }) {
   const steps: AgentStep[] = [];
   let tokensIn = 0; let tokensOut = 0; let cost = 0;
   const ctrl = new AbortController();
@@ -154,8 +174,8 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
   };
   const budget = Math.max(6000, contextBudget(choice) + 4000);
   const request = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
-  const team = getSettings().ai.team.enabled && !getAgentRun(id)?.private;
-  const defs = team ? [...TOOL_DEFS, ...SUPERVISOR_DEFS] : TOOL_DEFS;
+  const team = opts.team;
+  const { names: allowed, defs } = toolsFor({ bot: opts.bot, team });
   try {
     for (let step = 0; step < maxSteps && !stopped(); step++) {
       const last = step === maxSteps - 1;
@@ -181,6 +201,7 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
         try {
           args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
           if (!tool && !(team && isSupervisorTool(call.function.name))) throw new Error(`Unknown tool ${call.function.name}.`);
+          if (tool && !allowed.has(call.function.name)) throw new Error(opts.bot?.permission === "read" && tool.changes ? `${call.function.name} changes things, and this bot is read-only.` : `${call.function.name} is not available here.`);
           if (tool?.changes) {
             const summary = tool.describe?.(args) ?? `${call.function.name}(${JSON.stringify(args).slice(0, 200)})`;
             // The guardrail can only add a reason to ask: deleting always asks, and the decision model may flag more.
@@ -189,6 +210,7 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
             if (mustAsk) {
               const pending: PendingApproval = { callId: call.id, tool: call.function.name, args, summary, askedAt: new Date().toISOString(), risk: guard.reasons.length || guard.signals ? { reasons: guard.reasons, signals: guard.signals, error: guard.error } : undefined };
               save({ pending });
+              if (opts.bot?.onPending) void Promise.resolve(opts.bot.onPending(getAgentRun(id)!, pending)).catch(() => undefined);
               const decision = await new Promise<Decision>((resolve) => {
                 state.waiting.set(id, resolve);
                 setTimeout(() => answerApproval(id, "deny"), APPROVAL_TIMEOUT_MS).unref?.();
@@ -201,7 +223,7 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
           if (stopped()) break;
           result = decided === "declined"
             ? "The user declined this action. Do not try it again; continue without it or explain what you would have done."
-            : tool ? await tool.run(args, { browser, signal: ctrl.signal, model: choice })
+            : tool ? await tool.run(args, { browser, signal: ctrl.signal, model: choice, runId: id, botId: opts.bot?.botId })
               : await runSupervisorTool(call.function.name, args, { browser, signal: ctrl.signal, model: choice, teamId: id });
         } catch (e) {
           ok = false;
@@ -231,6 +253,10 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
     state.ctrls.delete(id);
     // The review runs after the answer is shown, so it never slows the reply down.
     if (reviewable) void reviewRun(id);
+    if (opts.bot?.onDone) {
+      const done = getAgentRun(id);
+      if (done) await Promise.resolve(opts.bot.onDone(done)).catch(() => undefined);
+    }
   }
 }
 

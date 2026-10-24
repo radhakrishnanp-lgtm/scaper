@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Bell, Globe, Hash, Mail, MessageCircle, Send, Smartphone, Webhook } from "lucide-react";
+import { Bell, Globe, Hash, Mail, MessageCircle, MessageSquareText, Send, Smartphone, Webhook } from "lucide-react";
 import type { NotifyChannels, Pagination } from "@/lib/schemas";
 import type { PublicSettings } from "@/server/repo/settings";
 import { api } from "@/lib/api-client";
@@ -10,10 +10,11 @@ import { cn } from "@/lib/cn";
 import { useApi } from "@/lib/use-api";
 import { Badge, Field, Input, Segmented, Select } from "./ui";
 
-const CHANNELS: { key: keyof NotifyChannels; label: string; icon: React.ReactNode }[] = [
+export const CHANNELS: { key: keyof NotifyChannels; label: string; icon: React.ReactNode }[] = [
   { key: "desktop", label: "Desktop & inbox", icon: <Bell className="size-4" /> },
   { key: "telegram", label: "Telegram", icon: <Send className="size-4" /> },
   { key: "email", label: "Email", icon: <Mail className="size-4" /> },
+  { key: "whatsapp", label: "WhatsApp", icon: <MessageSquareText className="size-4" /> },
   { key: "discord", label: "Discord", icon: <MessageCircle className="size-4" /> },
   { key: "slack", label: "Slack", icon: <Hash className="size-4" /> },
   { key: "ntfy", label: "ntfy push", icon: <Smartphone className="size-4" /> },
@@ -33,10 +34,11 @@ export function useConfiguredChannels() {
     slack: Boolean(n.slackWebhookUrl),
     ntfy: Boolean(n.ntfyUrl),
     email: Boolean(n.smtpHost && n.emailTo),
+    whatsapp: n.whatsappProvider === "callmebot" ? Boolean(n.hasCallmebotKey && n.whatsappTo) : Boolean(n.hasWhatsappToken && n.whatsappPhoneId && n.whatsappTo),
   } satisfies Record<keyof NotifyChannels, boolean>;
 }
 
-/** Toggle chips for the 7 alert channels; channels not set up yet link to Settings. */
+/** Toggle chips for the alert channels; channels not set up yet link to Settings. */
 export function ChannelPicker({ value, onChange }: { value: NotifyChannels; onChange: (v: NotifyChannels) => void }) {
   const configured = useConfiguredChannels();
   return (

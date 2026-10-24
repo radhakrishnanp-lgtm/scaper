@@ -47,7 +47,7 @@ export const TEMPLATES: Template[] = [
     id: "monitor", title: "Alert me about new listings", icon: <BellRing className="size-4 text-accent" />,
     description: "Runs every hour and alerts you when new rows appear (jobs, flats, products, posts).",
     extract: { type: "selectors", itemSelector: "", fields: [f("title", ""), f("link", "a", "href")] },
-    options: { monitor: { enabled: true, keyFields: ["link"], notifyNew: true, notifyRemoved: false, channels: { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false } } },
+    options: { monitor: { enabled: true, keyFields: ["link"], notifyNew: true, notifyRemoved: false, channels: { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false } } },
     scheduleMinutes: 60,
   },
   {

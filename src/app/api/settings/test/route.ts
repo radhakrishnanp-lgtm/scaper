@@ -3,11 +3,11 @@ import { handler, HttpError, rateLimit, readJson } from "@/server/api";
 import { chat } from "@/server/ai/client";
 import { testChannel } from "@/server/notify";
 
-const schema = z.object({ channel: z.enum(["ai", "ai_fast", "webhook", "telegram", "discord", "slack", "ntfy", "email"]) });
+const schema = z.object({ channel: z.enum(["ai", "ai_fast", "webhook", "telegram", "discord", "slack", "ntfy", "email", "whatsapp"]) });
 
 const SENT: Record<string, string> = {
   webhook: "Webhook accepted the test message.", telegram: "Telegram message sent.", discord: "Discord message sent.",
-  slack: "Slack message sent.", ntfy: "ntfy push sent.", email: "Test email sent.",
+  slack: "Slack message sent.", ntfy: "ntfy push sent.", email: "Test email sent.", whatsapp: "WhatsApp message sent.",
 };
 
 /** Sends a real test request through a configured channel, so the user knows it works. */

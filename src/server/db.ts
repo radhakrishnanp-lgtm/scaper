@@ -577,6 +577,55 @@ CREATE TABLE agent_reviews (
 CREATE INDEX idx_reviews_created ON agent_reviews(created_at);
 `,
   },
+  {
+    id: 9,
+    name: "bots",
+    sql: `
+-- Your own bots: a name, a job, instructions, when to run (schedule and/or events), what they may do
+-- and where they tell you. Each run is an agent run with bot_id set.
+CREATE TABLE bots (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  emoji TEXT NOT NULL DEFAULT '🤖',
+  config TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  last_run_id TEXT,
+  last_status TEXT,
+  run_count INTEGER NOT NULL DEFAULT 0,
+  finished_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_bots_due ON bots(enabled, next_run_at);
+
+-- Each bot's own memory: facts it keeps between runs, plus a short summary of each run.
+CREATE TABLE bot_memory (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'fact' CHECK (kind IN ('fact','run')),
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (bot_id, kind, key)
+);
+CREATE INDEX idx_bot_memory ON bot_memory(bot_id, kind, updated_at DESC);
+
+-- External alerts held during quiet hours; sent when quiet hours end.
+CREATE TABLE held_alerts (
+  id TEXT PRIMARY KEY,
+  alert TEXT NOT NULL,
+  channels TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+ALTER TABLE agent_runs ADD COLUMN bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL;
+ALTER TABLE agent_runs ADD COLUMN trigger TEXT;
+CREATE INDEX idx_agent_bot ON agent_runs(bot_id, created_at DESC);
+`,
+  },
 ];
 
 function migrate(db: Database.Database) {

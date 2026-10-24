@@ -21,7 +21,7 @@ export type WatcherDraft = {
   ignoreText: string; options: WatcherOptions; tags: string[]; schedule: ScheduleValue;
 };
 
-const DEFAULT_NOTIFY: NotifyChannels = { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false };
+const DEFAULT_NOTIFY: NotifyChannels = { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false };
 
 export function blankWatcher(url = "", name = "", type: WatchTarget["type"] = "page"): WatcherDraft {
   return {

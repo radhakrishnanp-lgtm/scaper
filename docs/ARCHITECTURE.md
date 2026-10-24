@@ -57,12 +57,17 @@ repo/ ── prepared statements only ── SQLite (data/scaper.db, WAL)
 | `deal_searches` | Saved deal searches | Alert on new matches |
 | `site_rules` · `host_stats` | Per-site rules (slower delay, mode, headers, cookies, pause) and daily request stats | Stats kept 90 days |
 | `notifications` | Alert inbox | Read alerts older than 90 days pruned |
-| `agent_runs` | Agent transcripts; `parent_id` links follow-ups | |
+| `agent_runs` | Agent transcripts; `parent_id` links follow-ups; `bot_id` and `trigger` mark bot runs | Bot runs are left out of the agent page's list |
+| `bots` · `bot_memory` | Your bots (settings as JSON, `next_run_at` for the scheduler, last outcome) and each bot's own memory (facts, plus a summary of each of its last 20 runs) | Memory is deleted with the bot |
 | `ai_usage` | Requests and tokens per day | Enforces the daily cap |
 | `api_tokens` | Hashed API tokens | |
 | `event_log` | Audit log (Logs page) | Kept N days |
 
 Migrations live in `src/server/db.ts` (numbered, applied in a transaction at startup).
+
+## Bots
+
+A bot run is an ordinary agent run (`startAgent` with a `bot` option): the bot's section (role, job, instructions, permission, alert and end conditions, its memory and recent runs) is added after the usual system prompt, its tools are filtered by `toolsFor` (bot-only memory and message tools in, bot-management tools out, changing tools out for read-only bots), and two hooks tell the bot when the run waits for an approval and when it ends. The scheduler starts due bots every tick (`runDueBots`); `startBotEvents` listens on the in-process bus for `task_run` events and alerts (`notification` with its kind), maps them to bot events and wakes the bots that subscribe, respecting each bot's cooldown. Alerts go through `deliver`, which adds the channels from Settings → Alerts → "Where each alert goes" (`routeChannels`) to the item's own channels.
 
 ## First bottleneck and plan
 

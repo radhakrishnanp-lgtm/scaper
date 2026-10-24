@@ -213,7 +213,7 @@ function ImportDialog({ open, onClose, tags, onDone }: { open: boolean; onClose:
   const [minutes, setMinutes] = useState(360);
   const [mode, setMode] = useState<"fast" | "browser">("fast");
   const [chosenTags, setChosenTags] = useState<string[]>([]);
-  const [notify, setNotify] = useState<NotifyChannels>({ desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false });
+  const [notify, setNotify] = useState<NotifyChannels>({ desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false });
   const [busy, setBusy] = useState(false);
   const count = urls.split(/\n+/).filter((l) => l.trim() && !l.trim().startsWith("#")).length;
   const submit = async () => {
