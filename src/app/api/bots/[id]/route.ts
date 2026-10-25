@@ -1,6 +1,6 @@
 import { handler, HttpError, idParam, notFound, readJson } from "@/server/api";
 import { stopAgent } from "@/server/ai/agent";
-import { BotError, botRuns, deleteBot, describeSchedule, getBot, listBotMemory, updateBot } from "@/server/repo/bots";
+import { BotError, botRuns, deleteBot, describeSchedule, getBot, listBotEvals, listBotMemory, updateBot } from "@/server/repo/bots";
 import { audit } from "@/server/repo/events";
 import { botPatchSchema } from "@/lib/schemas";
 
@@ -9,7 +9,7 @@ type Ctx = { params: Promise<{ id: string }> };
 export const GET = handler(async (_req, { params }: Ctx) => {
   const bot = getBot(idParam.parse((await params).id));
   if (!bot) throw notFound("Bot");
-  return { bot: { ...bot, scheduleText: describeSchedule(bot.schedule) }, runs: botRuns(bot.id, 40), memory: listBotMemory(bot.id) };
+  return { bot: { ...bot, scheduleText: describeSchedule(bot.schedule) }, runs: botRuns(bot.id, 40), memory: listBotMemory(bot.id), evals: listBotEvals(bot.id, 40) };
 });
 
 export const PUT = handler(async (req, { params }: Ctx) => {

@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleDashed, CircleSlash, Clock, Loader2, ShieldAlert, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, CircleSlash, Clock, Loader2, PauseCircle, ShieldAlert, XCircle } from "lucide-react";
 import type { Job } from "@/server/repo/jobs";
 import { Badge } from "./ui";
 
@@ -14,6 +14,7 @@ export function StatusBadge({ status, enabled = true, failCount = 0 }: { status:
 const JOB: Record<string, { tone: "neutral" | "accent" | "success" | "warning" | "danger"; label: string; icon: React.ReactNode }> = {
   queued: { tone: "neutral", label: "queued", icon: <Clock className="size-3" /> },
   running: { tone: "accent", label: "running", icon: <Loader2 className="size-3 animate-spin" /> },
+  paused: { tone: "warning", label: "paused", icon: <PauseCircle className="size-3" /> },
   succeeded: { tone: "success", label: "done", icon: <CheckCircle2 className="size-3" /> },
   failed: { tone: "danger", label: "failed", icon: <XCircle className="size-3" /> },
   cancelled: { tone: "neutral", label: "cancelled", icon: <CircleSlash className="size-3" /> },

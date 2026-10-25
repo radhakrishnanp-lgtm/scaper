@@ -68,6 +68,16 @@ export function describeTask(d: {
 }): string[] {
   const o = d.options;
   const out: string[] = [];
+  if (o.source.type === "apify") {
+    const src = o.source;
+    out.push(`Runs the Apify actor ${src.actorId} on your account, up to ${src.maxItems.toLocaleString("en-IN")} items${src.maxChargeUsd ? ` and US$${src.maxChargeUsd}` : ""} per run.`);
+    out.push("Keeps the actor's items as this task's rows, with nested fields as columns.");
+    if (o.dedupeBy.length) out.push(`Removes duplicates by ${o.dedupeBy.join(" + ")}.`);
+    if (o.monitor.enabled) out.push(`Alerts on ${[o.monitor.notifyNew && "new", o.monitor.notifyRemoved && "removed"].filter(Boolean).join(" and ") || "no"} rows via ${d.channels.join(", ") || "the inbox"}.`);
+    if (o.downloads.columns.length) out.push(`Downloads the files in ${o.downloads.columns.join(", ")} (up to ${o.downloads.maxFiles}) after each run.`);
+    out.push(d.scheduleMinutes || d.cron ? `Runs ${scheduleText(d.scheduleMinutes, d.cron)}.` : "Runs when you press Run (no schedule).");
+    return out;
+  }
   const starts = d.startCount + 1;
   const inputRows = o.inputs.trim() ? Math.max(0, o.inputs.trim().split(/\r?\n/).length - 1) : 0;
   out.push(`Opens ${starts > 1 ? `${starts} start pages` : "the start page"}${inputRows ? ` for each of ${inputRows} CSV rows` : ""}${o.sitemap.url ? ` plus up to ${o.sitemap.limit} pages from the sitemap` : ""} in ${d.mode === "browser" ? "a real browser" : "fast HTTP mode"}.`);
@@ -87,6 +97,7 @@ export function describeTask(d: {
   if (o.monitor.enabled) out.push(`Alerts on ${[o.monitor.notifyNew && "new", o.monitor.notifyRemoved && "removed"].filter(Boolean).join(" and ") || "no"} rows via ${d.channels.join(", ") || "the inbox"}.`);
   if (o.output.files.length) out.push(`Saves ${o.output.files.join(", ").toUpperCase()} files to the data folder after each run.`);
   if (o.output.webhook) out.push("Posts the rows to your webhook.");
+  if (o.downloads.columns.length) out.push(`Downloads the files in ${o.downloads.columns.join(", ")} (up to ${o.downloads.maxFiles}) after each run.`);
   out.push(d.scheduleMinutes || d.cron ? `Runs ${scheduleText(d.scheduleMinutes, d.cron)}.` : "Runs when you press Run (no schedule).");
   return out;
 }

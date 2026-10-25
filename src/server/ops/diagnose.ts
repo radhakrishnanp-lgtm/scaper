@@ -83,6 +83,9 @@ export function diagnoseRun(d: DiagnoseInput): Diagnosis | null {
       case "step":
         return { ...base, code: "step_failed", area: "setup", severity: "error", title: "A browser step failed",
           detail: `${e.message} The button or field the step uses may have moved.`, action: { kind: "steps", label: "Fix the steps" } };
+      case "service":
+        return { ...base, code: "service", area: "setup", severity: "error", title: "Firecrawl or Apify refused the request",
+          detail: `${e.message} Check the key and the credit left in Integrations.`, action: { kind: "setup", label: "Open scraping settings" } };
       case "too_large":
         return { ...base, code: "too_large", area: "site", severity: "error", title: "The page is too large", detail: e.message, action: { kind: "edit", label: "Edit the task" } };
       default:

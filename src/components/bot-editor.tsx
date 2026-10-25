@@ -37,7 +37,7 @@ type Draft = Omit<BotInput, "notify"> & { notify: BotInput["notify"] };
 const NO_CHANNELS = { desktop: true, webhook: false, telegram: false, discord: false, slack: false, ntfy: false, email: false, whatsapp: false };
 const BASE: Draft = {
   name: "", emoji: "🤖", role: "", task: "", instructions: "", schedule: { type: "manual" }, triggers: [], condition: "", stopWhen: "",
-  permission: "ask", model: "main", maxSteps: 15, helpers: false, memory: true, notify: NO_CHANNELS, notifyMode: "important", cooldownMinutes: 10,
+  permission: "ask", model: "main", maxSteps: 15, helpers: false, memory: true, notify: NO_CHANNELS, notifyMode: "important", cooldownMinutes: 10, selfEval: true,
 };
 
 /** Starting points, in the spirit of Grok's bots and ChatGPT's scheduled tasks. */
@@ -70,6 +70,11 @@ export const TEMPLATES: { id: string; title: string; blurb: string; draft: Parti
       condition: "there is a new matching role", stopWhen: "I tell you I applied, or the page is gone for good" },
   },
   {
+    id: "social", title: "Social trends scout", blurb: "Every morning, finds what is trending on YouTube and Instagram for your topics. Needs Apify; it asks before each paid run until you set it to Go ahead.",
+    draft: { name: "Social trends scout", emoji: "📈", role: "Tells me what is trending on social media for my topics", schedule: { type: "daily", time: "08:00", days: [] }, permission: "ask", notifyMode: "always",
+      task: "Use apify_run_actor with streamers~youtube-scraper (searchQueries: my topics, sortingOrder: views, dateFilter: today, maxResults: 15) and apify~instagram-hashtag-scraper (hashtags: my topics, resultsType: reels, resultsLimit: 15). My topics: tamil cinema, chennai food (change these). Report the top 5 of each with title, views or likes and the link, and say what is new since yesterday. Remember what you reported." },
+  },
+  {
     id: "research", title: "Research assistant", blurb: "No schedule: chat with it to research products, shops or topics across websites.",
     draft: { name: "Research assistant", emoji: "🧭", role: "Researches products and topics across websites when I ask", schedule: { type: "manual" }, permission: "read", notifyMode: "off", helpers: true,
       task: "When I ask, research the question across a few good websites, compare what you find in a table with links, and say which option you would pick and why. Remember my preferences (budget, brands I like or avoid)." },
@@ -80,7 +85,7 @@ function toDraft(bot: Bot | null, template?: Partial<Draft>): Draft {
   if (!bot) return { ...BASE, ...template, notify: { ...NO_CHANNELS, ...template?.notify } };
   return {
     name: bot.name, emoji: bot.emoji, role: bot.role, task: bot.task, instructions: bot.instructions, schedule: bot.schedule, triggers: bot.triggers, condition: bot.condition, stopWhen: bot.stopWhen,
-    permission: bot.permission, model: bot.model, maxSteps: bot.maxSteps, helpers: bot.helpers, memory: bot.memory, notify: { ...NO_CHANNELS, ...bot.notify }, notifyMode: bot.notifyMode, cooldownMinutes: bot.cooldownMinutes,
+    permission: bot.permission, model: bot.model, maxSteps: bot.maxSteps, helpers: bot.helpers, memory: bot.memory, notify: { ...NO_CHANNELS, ...bot.notify }, notifyMode: bot.notifyMode, cooldownMinutes: bot.cooldownMinutes, selfEval: bot.selfEval,
   };
 }
 
@@ -238,6 +243,7 @@ export function BotEditor({ bot, targets, onClose, onSaved, template }: { bot: B
               </div>
               <Switch checked={d.memory} onChange={(v) => set("memory", v)} label="Own memory" description="Keeps facts and a summary of each run, so it does not repeat itself." />
               <Switch checked={d.helpers} onChange={(v) => set("helpers", v)} label="Helper agents" description="Lets it start helpers for big jobs, when helpers are on in Settings → AI." />
+              <Switch checked={d.selfEval} onChange={(v) => set("selfEval", v)} label="Grade itself after each run" description="The fast model scores each run against its job and your 👍/👎, and keeps up to two lessons for next time. Costs one small AI call per run." />
             </div>
           )}
         </section>

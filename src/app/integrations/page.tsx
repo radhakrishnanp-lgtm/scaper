@@ -2,11 +2,12 @@
 
 import { Suspense, useState } from "react";
 import Link from "next/link";
-import { Bot, CheckCircle2, Clock, FileSpreadsheet, KeyRound, Lock, Plug, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, Webhook, XCircle } from "lucide-react";
+import { Bot, CheckCircle2, Flame, Puzzle, Clock, FileSpreadsheet, KeyRound, Lock, Plug, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, Webhook, XCircle } from "lucide-react";
 import { WEBHOOK_EVENTS, type WebhookEndpoint } from "@/lib/schemas";
 import type { Delivery } from "@/server/repo/deliveries";
 import { CopyButton } from "@/components/data-table";
 import { Dialog } from "@/components/dialog";
+import { ApifyTab, FirecrawlTab, type ServiceStatus } from "@/components/service-integrations";
 import { Panel, useSection, type S, type SettingsResponse } from "@/components/settings-bits";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Callout, Card, CardHeader, Checkbox, Code, EmptyState, ErrorNote, Field, FilterChips, Input, LoadingRows, PageHeader, Segmented, Stat, Switch, Tabs, Textarea } from "@/components/ui";
@@ -16,8 +17,8 @@ import { dateTime, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
 
-type Tab = "mcp" | "webhooks" | "sheets" | "deliveries";
-type Status = {
+type Tab = "mcp" | "webhooks" | "sheets" | "firecrawl" | "apify" | "deliveries";
+type Status = ServiceStatus & {
   mcp: { enabled: boolean; allowWrite: boolean; tools: { name: string; description: string; changes: boolean }[]; tokens: number; bridge: string };
   webhooks: { default: boolean; endpoints: number; retries: boolean; week: { total: number; ok: number; failed: number; retrying: number } };
   sheets: { configured: boolean; email: string | null; tasks: { id: string; name: string; sheet: string; mode: string }[]; week: { total: number; ok: number; failed: number } };
@@ -308,11 +309,13 @@ function Integrations() {
   const err = settings.error ?? status.error;
   return (
     <>
-      <PageHeader title="Integrations" description="Connect Scaper to the rest of your tools: AI apps over MCP, webhooks with signed payloads and retries, and Google Sheets." />
+      <PageHeader title="Integrations" description="Connect Scaper to the rest of your tools: AI apps over MCP, webhooks with signed payloads and retries, Google Sheets, and your Firecrawl and Apify accounts." />
       <Tabs value={tab} onChange={setTab} className="mb-6" tabs={[
         { value: "mcp", label: "MCP", icon: <Bot className="size-4" /> },
         { value: "webhooks", label: "Webhooks", icon: <Webhook className="size-4" />, count: status.data ? status.data.webhooks.endpoints || null : null },
         { value: "sheets", label: "Google Sheets", icon: <FileSpreadsheet className="size-4" /> },
+        { value: "firecrawl", label: "Firecrawl", icon: <Flame className="size-4" /> },
+        { value: "apify", label: "Apify", icon: <Puzzle className="size-4" /> },
         { value: "deliveries", label: "Delivery log", icon: <Send className="size-4" />, count: status.data?.webhooks.week.failed || null },
       ]} />
       {err ? <ErrorNote message={err} onRetry={onSaved} /> : tab === "deliveries" ? <DeliveriesTab /> : !settings.data || !status.data ? <Card><LoadingRows rows={6} /></Card> : (
@@ -320,6 +323,8 @@ function Integrations() {
           {tab === "mcp" && <McpTab data={settings.data} status={status.data} onSaved={onSaved} />}
           {tab === "webhooks" && <WebhooksTab data={settings.data} status={status.data} onSaved={onSaved} />}
           {tab === "sheets" && <SheetsTab data={settings.data} status={status.data} onSaved={onSaved} />}
+          {tab === "firecrawl" && <FirecrawlTab data={settings.data} status={status.data} onSaved={onSaved} />}
+          {tab === "apify" && <ApifyTab data={settings.data} status={status.data} onSaved={onSaved} />}
         </>
       )}
       <p className="mt-6 flex items-center gap-1.5 text-xs text-muted"><KeyRound className="size-3.5" />Secrets, keys and webhook URLs are stored only in your local database and come back to the browser hidden.</p>

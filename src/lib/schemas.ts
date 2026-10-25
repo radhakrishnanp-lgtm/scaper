@@ -18,7 +18,8 @@ export const urlSchema = z
     }
   }, "Enter a valid http(s) URL");
 
-export const fetchModeSchema = z.enum(["browser", "fast"]);
+// "firecrawl": the page is loaded by your Firecrawl account and read here like any other page (your selectors, your AI).
+export const fetchModeSchema = z.enum(["browser", "fast", "firecrawl"]);
 export type FetchMode = z.infer<typeof fetchModeSchema>;
 
 const selector = z.string().trim().min(1, "Selector is required").max(500);
@@ -181,6 +182,25 @@ export const validationRuleSchema = z.object({
 });
 export type ValidationRule = z.infer<typeof validationRuleSchema>;
 
+/** Apify actor ids look like "username~actor-name" (the URL form "username/actor-name" is accepted too). */
+export const apifyActorIdSchema = z.string().trim().min(3, "Pick an actor").max(120)
+  .transform((v) => v.replace(/^https?:\/\/(console\.)?apify\.com\/(actors\/)?/i, "").replace(/\/(input-schema|api|information).*$/i, "").replace("/", "~"))
+  .refine((v) => /^[\w.-]+~[\w.-]+$|^[A-Za-z0-9]{17}$/.test(v), "Use the actor id, like apify~instagram-scraper");
+export const taskSourceSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("web") }),
+  z.object({
+    type: z.literal("apify"),
+    actorId: apifyActorIdSchema,
+    // The actor's JSON input, as shown on its Input tab in Apify.
+    input: z.record(z.string(), z.unknown()).default({}),
+    maxItems: z.number().int().min(1).max(100_000).default(200),
+    timeoutSeconds: z.number().int().min(30).max(86_400).default(900),
+    // Pay-per-result actors stop at this many US dollars per run. 0 = the actor's own limit.
+    maxChargeUsd: z.number().min(0).max(1000).default(1),
+  }),
+]);
+export type TaskSource = z.infer<typeof taskSourceSchema>;
+
 export const taskOptionsSchema = z.object({
   // More start URLs, one per line. Ranges expand: https://site/page/{1..5}
   startUrls: z.array(z.string().trim().min(1).max(2048)).max(5000).default([]),
@@ -266,6 +286,14 @@ export const taskOptionsSchema = z.object({
   // Extra columns the AI fills in from each row: a category, a translation, a short summary ...
   aiColumns: z.array(aiColumnSchema).max(5).default([]),
   aiColumnsMaxRows: z.number().int().min(1).max(5000).default(200),
+  // Where the rows come from: web pages (default), or an Apify actor run on your account (its dataset becomes the rows).
+  source: taskSourceSchema.default({ type: "web" }),
+  // After each run, download the files linked in these columns (images, videos, PDFs) with the download manager.
+  downloads: z.object({
+    columns: z.array(z.string().trim().min(1).max(60)).max(5).default([]),
+    folder: z.string().trim().max(80).default(""),
+    maxFiles: z.number().int().min(1).max(2000).default(100),
+  }).default({ columns: [], folder: "", maxFiles: 100 }),
 });
 export type TaskOptions = z.infer<typeof taskOptionsSchema>;
 export const defaultTaskOptions = (): TaskOptions => taskOptionsSchema.parse({});
@@ -685,6 +713,13 @@ export const integrationSettingsSchema = z.object({
   // MCP: AI apps like Claude Desktop, Claude Code and Cursor can use Scaper's tools with an API token.
   mcpEnabled: z.boolean().default(true),
   mcpAllowWrite: z.boolean().default(false),
+  // Firecrawl (firecrawl.dev or your own server): loads pages and searches the web with your key. Your LLM reads the result.
+  firecrawlKey: z.string().trim().max(300).default(""),
+  firecrawlUrl: z.string().trim().max(300).regex(/^https?:\/\/\S+$/i, "Start with http:// or https://").default("https://api.firecrawl.dev"),
+  // Apify: run actors from the Apify Store (YouTube, Instagram, TikTok …) on your account.
+  apifyToken: z.string().trim().max(300).default(""),
+  // A safety cap for any one actor run started by the agent or a bot (US dollars, pay-per-result actors).
+  apifyMaxChargeUsd: z.number().min(0).max(1000).default(1),
 });
 
 export const dataSettingsSchema = z.object({
@@ -696,6 +731,9 @@ export const dataSettingsSchema = z.object({
   keepBackups: z.number().int().min(1).max(60).default(7),
   // Quick scrapes, AI extraction, category scrapes and agent chats are kept in memory only, never on disk.
   privateMode: z.boolean().default(false),
+  // Download manager: files at once, the largest file allowed, and whether downloads continue after a restart.
+  downloadConcurrency: z.number().int().min(1).max(8).default(3),
+  maxDownloadMb: z.number().int().min(1).max(50_000).default(2048),
 });
 
 export const settingsSchema = z.object({
@@ -770,6 +808,8 @@ export const botSchema = z.object({
   notifyMode: z.enum(["always", "important", "off"]).default("important"),
   // Wait at least this long between runs started by events.
   cooldownMinutes: z.number().int().min(1).max(1440).default(10),
+  // After each run the bot grades itself against its job and your feedback, and keeps up to 10 lessons in its memory.
+  selfEval: z.boolean().default(true),
 });
 export type BotInput = z.infer<typeof botSchema>;
 export const botPatchSchema = botSchema.partial().extend({ enabled: z.boolean().optional() });
@@ -777,6 +817,16 @@ export const botPatchSchema = botSchema.partial().extend({ enabled: z.boolean().
 export const botMemoryInputSchema = z.object({
   key: z.string().trim().min(1, "Name the fact").max(80),
   value: z.string().trim().min(1, "Write the fact").max(2000),
+});
+
+export const botFeedbackSchema = z.object({
+  rating: z.union([z.literal(1), z.literal(-1), z.literal(0)]),
+  note: z.string().trim().max(1000).default(""),
+});
+
+export const downloadInputSchema = z.object({
+  urls: z.array(z.string().trim().min(1).max(4096)).min(1, "Add at least one link").max(2000),
+  folder: z.string().trim().max(80).default(""),
 });
 
 export const botRunInputSchema = z.object({

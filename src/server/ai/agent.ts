@@ -18,7 +18,7 @@ import { UNTRUSTED_NOTE } from "./extract";
 import { guideSummary } from "./knowledge";
 import { reviewRun } from "./review";
 import { SUPERVISOR_DEFS, TEAM_PROMPT, isSupervisorTool, runSupervisorTool, stopTeam } from "./team";
-import { BOT_ONLY_TOOLS, NOT_FOR_BOTS, TOOLS, memoryForPrompt } from "./tools";
+import { BOT_ONLY_TOOLS, NOT_FOR_BOTS, TOOLS, memoryForPrompt, serviceToolAvailable } from "./tools";
 
 const RULES = `You are Scaper's agent. You work for one person, on their own computer, using their own AI model. You can read websites, extract data, run and save scraping tasks, watch pages, track prices, find deals and manage Scaper, using the tools provided.
 How to work:
@@ -113,6 +113,7 @@ export type StartAgentInput = { prompt: string; model: ModelChoice; followUpOf?:
 /** Which tools a run gets: bots get their memory and notify tools but cannot manage bots; read-only bots only read. */
 export function toolsFor(opts: { bot?: Pick<BotRunOptions, "permission"> | null; team: boolean }) {
   const names = Object.entries(TOOLS).filter(([name, t]) => {
+    if (!serviceToolAvailable(name)) return false;
     if (opts.bot) return !NOT_FOR_BOTS.has(name) && (opts.bot.permission !== "read" || !t.changes);
     return !BOT_ONLY_TOOLS.has(name);
   }).map(([name]) => name);
@@ -252,7 +253,8 @@ async function loop(id: string, messages: ChatMessage[], choice: ModelChoice, ma
     state.waiting.delete(id);
     state.ctrls.delete(id);
     // The review runs after the answer is shown, so it never slows the reply down.
-    if (reviewable) void reviewRun(id);
+    // Bots grade their own runs against their job instead (see bot-eval).
+    if (reviewable && !opts.bot) void reviewRun(id);
     if (opts.bot?.onDone) {
       const done = getAgentRun(id);
       if (done) await Promise.resolve(opts.bot.onDone(done)).catch(() => undefined);

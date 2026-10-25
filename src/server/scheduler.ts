@@ -2,6 +2,7 @@ import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { runDueBots, startBotEvents } from "./ai/bots";
+import { pumpDownloads } from "./downloads/manager";
 import { closeBrowser } from "./fetcher/browser";
 import { enqueue, pump } from "./jobs";
 import { log } from "./log";
@@ -124,6 +125,7 @@ async function tick() {
       for (const d of searches) enqueue({ kind: "deal_search", refId: d.id, title: `Deals: ${d.name}`, trigger: "schedule", input: { dealSearchId: d.id }, unique: true });
     }
     pump();
+    pumpDownloads();
     runDueBots();
   } catch (e) {
     log.error("scheduler.tick_failed", { error: e as Error });

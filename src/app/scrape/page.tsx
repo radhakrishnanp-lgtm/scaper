@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Clock, Globe, ListChecks, Play, Save, ShieldCheck, Zap } from "lucide-react";
+import { ChevronDown, Clock, Flame, Globe, ListChecks, Play, Save, ShieldCheck, Zap } from "lucide-react";
 import { ExtractEditor, newField, type ExtractValue } from "@/components/extract-editor";
 import { PaginationField } from "@/components/form-bits";
 import { ScrapeResultView, type RunView } from "@/components/scrape-result";
@@ -99,8 +99,10 @@ function ScrapePage() {
                 <Segmented label="Fetch mode" value={mode} onChange={setMode} options={[
                   { value: "browser", label: "Browser", icon: <Globe className="size-4" /> },
                   { value: "fast", label: "Fast", icon: <Zap className="size-4" /> },
+                  { value: "firecrawl", label: "Firecrawl", icon: <Flame className="size-4" /> },
                 ]} />
-                <p className="mt-1.5 text-xs text-muted">{mode === "browser" ? "Runs JavaScript like a real browser. Works on most modern sites." : "Plain HTTP, no JavaScript. Much faster and lighter."}</p>
+                <p className="mt-1.5 text-xs text-muted">{mode === "browser" ? "Runs JavaScript like a real browser. Works on most modern sites." : mode === "fast" ? "Plain HTTP, no JavaScript. Much faster and lighter."
+                  : <>Loaded by Firecrawl with your key (costs credits), then read here with your selectors or your AI model. Add the key in <Link className="text-accent hover:underline" href="/integrations?tab=firecrawl">Integrations → Firecrawl</Link>.</>}</p>
               </div>
 
               <div>
@@ -121,7 +123,7 @@ function ScrapePage() {
                       <StepsEditor steps={steps} onChange={setSteps} url={fullUrl} />
                     </div>
                     <PaginationField value={pagination} onChange={setPagination} mode={mode} />
-                    <Switch checked={screenshot} onChange={setScreenshot} label="Take a screenshot" description="Browser mode only. Loads images, so it is a little slower." disabled={mode === "fast"} />
+                    <Switch checked={screenshot} onChange={setScreenshot} label="Take a screenshot" description="Browser mode only. Loads images, so it is a little slower." disabled={mode !== "browser"} />
                     <Switch checked={priv} onChange={setPriv} label="Private" description="Keep the result in memory for an hour only: nothing saved in Data, the AI log or site statistics." />
                   </div>
                 )}

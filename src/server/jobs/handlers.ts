@@ -10,9 +10,15 @@ import { runTask } from "../tasks/engine";
 import { checkWatcher } from "../watch/runner";
 import { syncRunToSheet } from "../integrations/sheets";
 import { runHeal } from "../ops/heal";
-import { jobFailure, registerJobHandler, type JobContext } from "./queue";
+import { runTaskDownloads } from "../downloads/manager";
+import type { TaskCheckpoint } from "../tasks/engine";
+import { jobFailure, JobPaused, registerJobHandler, type JobContext } from "./queue";
 
 const hooks = (ctx: JobContext) => ({ signal: ctx.signal, log: ctx.log, progress: ctx.progress });
+/** Task runs can pause at a page boundary and carry on later. */
+const pausable = (ctx: JobContext) => ({
+  ...hooks(ctx), shouldPause: ctx.pauseRequested, checkpoint: (cp: TaskCheckpoint) => ctx.checkpoint(cp), paused: () => new JobPaused(),
+});
 
 function runSummary(run: ScrapeRun) {
   return {
@@ -46,8 +52,15 @@ export function registerHandlers() {
     const options = scheduled && !r.options.output.files.length ? { ...r.options, output: { ...r.options.output, files: ["csv" as const] } } : r.options;
     ctx.log("info", `Running task "${r.name}".`);
     // Failure alerts (grouped into one per problem) and repairs happen after the run; see ops/after-run.
-    const run = await runTask({ url: r.url, mode: r.mode, extract: r.extract, options, recipeId: r.id, taskName: r.name, jobId: ctx.job.id, version: r.version, trigger: ctx.job.trigger }, hooks(ctx));
+    const run = await runTask({
+      url: r.url, mode: r.mode, extract: r.extract, options, recipeId: r.id, taskName: r.name, jobId: ctx.job.id, version: r.version, trigger: ctx.job.trigger,
+      resume: ctx.resumeFrom as TaskCheckpoint | null,
+    }, pausable(ctx));
     recordRecipeRun(r.id, run.status);
+    if (options.downloads.columns.length && (run.status === "ok" || run.status === "partial")) {
+      const n = runTaskDownloads(run, options.downloads, r.name);
+      if (n) ctx.log("info", `Added ${n} file(s) to Downloads.`);
+    }
     failIfBad(run);
     return runSummary(run);
   });
@@ -68,7 +81,7 @@ export function registerHandlers() {
   registerJobHandler("scrape", async (ctx) => {
     const spec = ctx.job.input as { url: string; mode: FetchMode; extract: ExtractSpec; options?: unknown; screenshot?: boolean; recipeId?: string | null };
     const options = spec.options ? taskOptionsSchema.parse(spec.options) : undefined;
-    const run = await runTask({ url: spec.url, mode: spec.mode, extract: spec.extract, options, screenshot: spec.screenshot, recipeId: spec.recipeId ?? null, jobId: ctx.job.id }, hooks(ctx));
+    const run = await runTask({ url: spec.url, mode: spec.mode, extract: spec.extract, options, screenshot: spec.screenshot, recipeId: spec.recipeId ?? null, jobId: ctx.job.id, resume: ctx.resumeFrom as TaskCheckpoint | null }, ctx.job.private ? hooks(ctx) : pausable(ctx));
     failIfBad(run);
     return runSummary(run);
   });

@@ -18,7 +18,7 @@ export function useSection<K extends keyof S>(initial: S[K], key: K, onSaved: (s
   const save = async (extra: Record<string, unknown> = {}) => {
     setSaving(true); setErrors({});
     const body: Record<string, unknown> = { ...v, ...extra };
-    for (const k of ["hasApiKey", "hasTelegramToken", "hasSmtpPass", "serviceAccountEmail"]) delete body[k];
+    for (const k of ["hasApiKey", "hasTelegramToken", "hasSmtpPass", "serviceAccountEmail", "hasFirecrawlKey", "hasApifyToken", "hasWhatsappToken", "hasCallmebotKey"]) delete body[k];
     try {
       const res = await api<{ settings: S }>("/api/settings", { method: "PUT", body: { [key]: body } });
       setV(res.settings[key]); onSaved(res.settings);

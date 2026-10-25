@@ -9,7 +9,8 @@ export type BusEvent =
   | { type: "product"; id: string }
   | { type: "agent"; id: string; status: string }
   | { type: "job"; id: string; status: string; kind: string; title: string; progress?: Record<string, unknown> }
-  | { type: "deal_search"; id: string };
+  | { type: "deal_search"; id: string }
+  | { type: "download"; id: string; status: string; bytes: number; total: number | null; name: string };
 
 const g = globalThis as unknown as { __scaperBus?: EventEmitter };
 const emitter = (g.__scaperBus ??= new EventEmitter().setMaxListeners(100));

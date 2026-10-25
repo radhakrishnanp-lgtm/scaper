@@ -78,7 +78,9 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | Method & path | Purpose | Rate limit |
 |---|---|---|
 | POST `/api/mcp` | MCP (JSON-RPC 2.0, Streamable HTTP, JSON responses): `initialize`, `ping`, `tools/list`, `tools/call`. Needs a Bearer token from other apps. Off switch and "Allow changes" in Integrations → MCP | 120/min |
-| GET `/api/integrations` | Status of MCP, webhooks and Sheets with 7-day delivery counts | – |
+| GET `/api/integrations` | Status of MCP, webhooks, Sheets, Firecrawl and Apify with 7-day delivery counts | – |
+| POST `/api/integrations/firecrawl/test` · POST `/api/integrations/apify/test` | Load example.com through Firecrawl (and show credits left) · check the Apify token (user name and plan) | – |
+| GET `/api/integrations/apify/store?q=` · GET `/api/integrations/apify/actor?id=` | Search the Apify Store, most used first · one actor's title and example input | – |
 | POST `/api/integrations/webhooks/test` · POST `/api/integrations/sheets/test` | Test an endpoint `{id?, url?, secret?}` · open a sheet `{spreadsheet}` | 20/min |
 | GET `/api/deliveries?kind&status&target&limit` · POST `/api/deliveries/:id/redeliver` · POST `/api/deliveries/retry-failed` | Delivery log with request, response and attempts · send again · retry every failed one | redeliver: 30/min |
 
@@ -89,6 +91,18 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | GET `/api/jobs?status&kind&q&before&limit` · DELETE `/api/jobs` | List jobs · clear finished ones |
 | GET `/api/jobs/:id?after=<logId>` | Job with progress and its log lines after `after` |
 | POST `/api/jobs/:id/cancel` · POST `/api/jobs/:id/retry` | Cancel a queued or running job · run it again |
+| POST `/api/jobs/:id/pause` · POST `/api/jobs/:id/resume` | Pause a queued job, or a running task or quick scrape after its current page (it saves where it stopped) · carry on from there. Private runs cannot pause |
+| POST `/api/jobs/pause-all` | `{action: pause\|resume, downloads?: true}` pauses or resumes every run, and the download manager unless `downloads` is false; returns `{jobs, downloads}` |
+
+### Downloads
+
+| Method & path | Purpose |
+|---|---|
+| GET `/api/downloads?status&q&limit` | Files with progress, counts, the downloads folder, concurrency and size limit |
+| POST `/api/downloads` | Queue direct file links `{urls: string[], folder?}`; the same link in the same folder is skipped |
+| PATCH `/api/downloads` | `{action: pause\|resume\|cancel\|retry, ids: string[] \| "all"}` |
+| DELETE `/api/downloads` · DELETE `/api/downloads/:id?file=1` | Clear finished rows (files stay) · remove one row, and its file with `file=1` |
+| GET `/api/downloads/:id/file?open=1` | The downloaded file (as an attachment, or inline with `open=1`, sandboxed). Only files inside the downloads folder are served |
 
 ### Monitor
 
@@ -121,9 +135,10 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | GET `/api/playbooks?q` · POST `/api/playbooks` | List playbooks (best success rate first when searching) · create `{name, kind?, instructions, examples?, questions?, notes?}` | – |
 | PUT/DELETE `/api/playbooks/:id` | Save a new version (name kept) · delete | – |
 | GET `/api/bots` · POST `/api/bots` | Your bots (with `scheduleText`), the active-bot limit and what event triggers can point at (`targets`: tasks, watchers, products, deal searches) · create `{name, emoji?, role, task, instructions?, schedule: {type: manual} \| {type: interval, minutes ≥ 5} \| {type: daily, time: "HH:MM", days?: [0-6]}, triggers?: [{event: task.finished\|task.failed\|task.alert\|watcher.change\|price.alert\|deal.found, refId?}], condition?, stopWhen?, permission: read\|ask\|auto, model?, maxSteps?, helpers?, memory?, notify?, notifyMode: always\|important\|off, cooldownMinutes?}`; 409 past 20 active bots | – |
-| GET/PUT/DELETE `/api/bots/:id` | One bot with its last 40 runs (agent runs with `bot_id` and `trigger`) and its memory · change any fields or `{enabled}` (only the fields you send) · delete it and its memory (runs stay) | – |
+| GET/PUT/DELETE `/api/bots/:id` | One bot with its last 40 runs (agent runs with `bot_id` and `trigger`), its memory and its run grades (`evals`) · change any fields or `{enabled}` (only the fields you send) · delete it and its memory (runs stay) | – |
 | POST `/api/bots/:id/run` | Run now `{}` or chat `{prompt, followUpOf?}`; 409 when it is already running, paused for its schedule, in private mode or past 100 runs today. Approvals use `/api/agent/runs/:id/approve` | – |
-| GET/POST/DELETE `/api/bots/:id/memory` · DELETE `/api/bots/:id/memory/:memId` | The bot's facts and run summaries · add or replace a fact `{key, value}` (secrets refused) · forget everything · forget one | – |
+| GET/POST/DELETE `/api/bots/:id/memory` · DELETE `/api/bots/:id/memory/:memId` | The bot's facts, run summaries and lessons · add or replace a fact `{key, value}` (secrets refused) · forget everything · forget one (a lesson too) | – |
+| POST `/api/bots/:id/runs/:runId/feedback` | Your verdict on one run `{rating: 1\|-1\|0, note?}`; a note becomes a lesson the bot reads from its next run on, an empty note removes it. `GET /api/bots/:id` returns `evals`: each run's grade (score 1-5, did its job, summary, lessons, suggestion) and your rating | – |
 | GET `/api/ai/usage` | Requests, tokens and cost today, this month and for 30 days, with limits and per-model stats | – |
 | GET `/api/knowledge` | What the agent knows: the full guide, its topics, any pages or tools without help, notes, recent self-reviews and their average, the notes folder | – |
 | POST `/api/knowledge/notes` · GET/PUT/DELETE `/api/knowledge/notes/:id` | Add a note `{title, kind: how-to\|site\|lesson\|reference, body}` · read · save a new version · delete (its `.md` file too). Bodies that look like keys or passwords are refused | – |

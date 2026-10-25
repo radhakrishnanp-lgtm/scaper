@@ -6,6 +6,7 @@ import { browserGet } from "./browser";
 import type { InspectResult } from "./inspect-script";
 import { FetchError } from "./errors";
 import { httpGet } from "./http";
+import { firecrawlScrape, IntegrationError } from "../integrations/firecrawl";
 import { assertPublicUrl } from "./network-guard";
 import { checkRobots, detectBotWall, hostBlockedFor, parseRetryAfter, penalize, reward, withHostTurn } from "./politeness";
 
@@ -93,7 +94,15 @@ export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions
     let retryAfter: string | null = null;
     let status: number | null = null;
     try {
-      if (mode === "fast") {
+      if (mode === "firecrawl") {
+        // Your Firecrawl account loads the page; it is read here like any other page. 401/402 stop the run.
+        const fc = await firecrawlScrape(url, { signal: opts.signal }).catch((e: Error) => {
+          if (e instanceof IntegrationError) throw new FetchError(e.status === 401 || e.status === 402 || !e.status ? "service" : e.status === 429 ? "blocked" : "http", e.message, e.status);
+          throw e;
+        });
+        if (!notes.includes("Loaded through Firecrawl.")) notes.push("Loaded through Firecrawl.");
+        page = { finalUrl: fc.url, status: fc.status, html: fc.html, title: fc.title, text: fc.markdown, contentType: "text/html" };
+      } else if (mode === "fast") {
         const res = await httpGet(url, { userAgent: fastUa, timeoutMs, proxyUrl: s.proxyUrl, checkUrl: guard, headers, cookies: rule?.cookies, signal: opts.signal, accept: opts.accept });
         retryAfter = res.headers.get("retry-after");
         const title = /<title[^>]*>([^<]*)<\/title>/i.exec(res.text)?.[1]?.trim() ?? "";

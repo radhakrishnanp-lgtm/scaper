@@ -1,5 +1,5 @@
 import {
-  Activity, Bell, Bot, BotMessageSquare, BrainCircuit, Database, FolderTree, Gauge, Globe, Inbox, LayoutDashboard, ListChecks, Plug, Radar, Scale, ScanSearch, ScrollText, Settings, Tag,
+  Activity, Bell, Bot, BotMessageSquare, BrainCircuit, Database, Download, FolderTree, Gauge, Globe, Inbox, LayoutDashboard, ListChecks, Plug, Radar, Scale, ScanSearch, ScrollText, Settings, Tag,
   type LucideIcon,
 } from "lucide-react";
 
@@ -23,6 +23,7 @@ export const NAV: NavGroup[] = [
       { href: "/tasks", label: "Tasks", icon: ListChecks, keywords: "recipes saved scrapers crawl pagination schedule" },
       { href: "/runs", label: "Runs", icon: Activity, keywords: "jobs queue running logs" },
       { href: "/history", label: "Data", icon: Database, keywords: "history results datasets export csv excel" },
+      { href: "/downloads", label: "Downloads", icon: Download, keywords: "download manager files images videos pdf pause resume" },
     ],
   },
   {
@@ -46,7 +47,7 @@ export const NAV: NavGroup[] = [
   {
     label: "System",
     items: [
-      { href: "/integrations", label: "Integrations", icon: Plug, keywords: "mcp claude cursor webhooks google sheets deliveries api" },
+      { href: "/integrations", label: "Integrations", icon: Plug, keywords: "mcp claude cursor webhooks google sheets deliveries api firecrawl apify keys" },
       { href: "/sites", label: "Sites", icon: Globe, keywords: "hosts rules cookies headers delay backoff" },
       { href: "/logs", label: "Logs", icon: ScrollText, keywords: "events audit errors" },
       { href: "/settings", label: "Settings", icon: Settings, keywords: "ai keys channels telegram email backups tokens" },

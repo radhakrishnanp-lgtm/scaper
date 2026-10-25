@@ -1,5 +1,5 @@
 import "server-only";
-import { BOT_ONLY_TOOLS, TOOLS, type AgentTool } from "../ai/tools";
+import { BOT_ONLY_TOOLS, serviceToolAvailable, TOOLS, type AgentTool } from "../ai/tools";
 import { audit } from "../repo/events";
 import { getSettings } from "../repo/settings";
 import { withWork } from "../privacy";
@@ -27,7 +27,7 @@ const EXCLUDED = new Set(["remember", "forget", ...BOT_ONLY_TOOLS]);
 
 export function mcpTools(allowWrite = getSettings().integrations.mcpAllowWrite) {
   return Object.entries(TOOLS)
-    .filter(([name, t]) => !EXCLUDED_GROUPS.has(t.group) && !EXCLUDED.has(name) && (allowWrite || !t.changes))
+    .filter(([name, t]) => !EXCLUDED_GROUPS.has(t.group) && !EXCLUDED.has(name) && serviceToolAvailable(name) && (allowWrite || !t.changes))
     .map(([name, t]) => ({
       name: t.def.function.name || name,
       key: name,

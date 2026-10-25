@@ -3,7 +3,7 @@ import { db } from "../db";
 import { ephemeral } from "./ephemeral";
 import { newId, now, pageSize, parseJson } from "./util";
 
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type JobStatus = "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled";
 export type JobKind = "task" | "scrape" | "watch" | "product" | "deal_search" | "backup" | "bulk_products" | "heal" | "sheets";
 export type JobTrigger = "manual" | "schedule" | "api" | "agent" | "retry" | "auto" | "repair" | "mcp";
 export type JobProgress = { done?: number; total?: number; rows?: number; label?: string };
@@ -12,9 +12,12 @@ type JobRow = {
   id: string; kind: JobKind; ref_id: string | null; title: string; status: JobStatus; trigger: JobTrigger;
   input: string; progress: string; result: string | null; error: string | null; attempts: number; max_attempts: number;
   priority: number; run_after: string; created_at: string; started_at: string | null; finished_at: string | null;
+  checkpoint?: string | null;
 };
-export type Job = Omit<JobRow, "input" | "progress" | "result"> & {
+export type Job = Omit<JobRow, "input" | "progress" | "result" | "checkpoint"> & {
   input: Record<string, unknown>; progress: JobProgress; result: Record<string, unknown> | null; duration_ms: number | null;
+  /** A paused or interrupted task run that can carry on where it stopped. */
+  resumable: boolean;
   /** Private jobs live in memory only and vanish an hour after they finish. */
   private?: boolean;
 };
@@ -27,8 +30,9 @@ const memJob = (m: MemJob): Job => ({ ...toJob(m.row), private: true });
 const touch = (m: MemJob) => mem.set(m.row.id, m);
 export type JobLog = { id: number; job_id: string; level: "info" | "warn" | "error"; message: string; data: Record<string, unknown> | null; created_at: string };
 
-const toJob = (r: JobRow): Job => ({
+const toJob = ({ checkpoint, ...r }: JobRow): Job => ({
   ...r,
+  resumable: Boolean(checkpoint) || r.status === "paused",
   input: parseJson(r.input, {}),
   progress: parseJson(r.progress, {}),
   result: parseJson(r.result, null),
@@ -66,7 +70,7 @@ export function getJob(id: string): Job | null {
 
 /** A queued or running job for the same thing, so schedules never stack duplicate work. */
 export function activeJobFor(kind: JobKind, refId: string): Job | null {
-  const r = db().prepare("SELECT * FROM jobs WHERE kind = ? AND ref_id = ? AND status IN ('queued','running') ORDER BY created_at LIMIT 1").get(kind, refId) as JobRow | undefined;
+  const r = db().prepare("SELECT * FROM jobs WHERE kind = ? AND ref_id = ? AND status IN ('queued','running','paused') ORDER BY created_at LIMIT 1").get(kind, refId) as JobRow | undefined;
   return r ? toJob(r) : null;
 }
 
@@ -120,7 +124,36 @@ export function cancelQueuedJob(id: string) {
 
 /** After a restart nothing is running any more: mark what was cut off. */
 export function failInterruptedJobs() {
-  return db().prepare("UPDATE jobs SET status = 'failed', error = 'Interrupted because Scaper restarted.', finished_at = ? WHERE status = 'running'").run(now()).changes;
+  // Task runs save where they are every few pages, so those pause instead and can carry on.
+  const paused = db().prepare("UPDATE jobs SET status = 'paused', error = 'Interrupted because Scaper restarted. Resume to carry on where it stopped.' WHERE status = 'running' AND checkpoint IS NOT NULL").run().changes;
+  return paused + db().prepare("UPDATE jobs SET status = 'failed', error = 'Interrupted because Scaper restarted.', finished_at = ? WHERE status = 'running'").run(now()).changes;
+}
+
+/** Where a task run is: saved every few pages and when it is paused. Null clears it. */
+export function saveCheckpoint(id: string, checkpoint: unknown) {
+  if (mem.get(id)) return;
+  db().prepare("UPDATE jobs SET checkpoint = ? WHERE id = ?").run(checkpoint === null ? null : JSON.stringify(checkpoint), id);
+}
+
+export function getCheckpoint<T>(id: string): T | null {
+  if (mem.get(id)) return null;
+  const r = db().prepare("SELECT checkpoint FROM jobs WHERE id = ?").get(id) as { checkpoint: string | null } | undefined;
+  return parseJson<T | null>(r?.checkpoint ?? null, null);
+}
+
+/** Running → paused (the queue calls this once the run has stopped), or queued → paused. */
+export function markJobPaused(id: string, message: string) {
+  return db().prepare("UPDATE jobs SET status = 'paused', error = ? WHERE id = ? AND status IN ('queued','running')").run(message, id).changes > 0;
+}
+
+/** Paused → queued, to run next; a run with a checkpoint carries on from it. */
+export function markJobResumed(id: string) {
+  return db().prepare("UPDATE jobs SET status = 'queued', error = NULL, run_after = ?, started_at = NULL, finished_at = NULL WHERE id = ? AND status = 'paused'").run(now(), id).changes > 0;
+}
+
+export function pausedJobIds(kinds?: JobKind[]) {
+  const rows = db().prepare("SELECT id, kind FROM jobs WHERE status = 'paused' ORDER BY created_at").all() as { id: string; kind: JobKind }[];
+  return rows.filter((r) => !kinds || kinds.includes(r.kind)).map((r) => r.id);
 }
 
 export function addJobLog(jobId: string, level: JobLog["level"], message: string, data?: Record<string, unknown>) {
@@ -159,7 +192,7 @@ export function listJobs(opts: { status?: string; kind?: string; refId?: string;
 
 export function jobCounts() {
   const rows = db().prepare("SELECT status, COUNT(*) c FROM jobs GROUP BY status").all() as { status: JobStatus; c: number }[];
-  const out: Record<JobStatus, number> = { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 };
+  const out: Record<JobStatus, number> = { queued: 0, running: 0, paused: 0, succeeded: 0, failed: 0, cancelled: 0 };
   for (const r of rows) out[r.status] = r.c;
   return out;
 }
@@ -179,5 +212,5 @@ export function clearFinishedJobs() {
 
 export function pruneJobs(days = 30) {
   const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
-  return db().prepare("DELETE FROM jobs WHERE created_at < ? AND status NOT IN ('queued','running')").run(cutoff).changes;
+  return db().prepare("DELETE FROM jobs WHERE created_at < ? AND status NOT IN ('queued','running','paused')").run(cutoff).changes;
 }

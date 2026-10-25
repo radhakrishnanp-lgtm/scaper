@@ -84,6 +84,8 @@ function keepIntegrationSecrets(next: Integrations, saved: Integrations): Integr
   return {
     ...next,
     googleServiceAccount: MASKED.test(next.googleServiceAccount) ? saved.googleServiceAccount : next.googleServiceAccount,
+    firecrawlKey: MASKED.test(next.firecrawlKey) ? saved.firecrawlKey : next.firecrawlKey,
+    apifyToken: MASKED.test(next.apifyToken) ? saved.apifyToken : next.apifyToken,
     webhooks: next.webhooks.map((w) => {
       const old = saved.webhooks.find((o) => o.id === w.id);
       return { ...w, secret: MASKED.test(w.secret) ? old?.secret ?? "" : w.secret, url: MASKED.test(decodeURI(w.url)) ? old?.url ?? w.url : w.url };
@@ -184,6 +186,10 @@ export function publicSettings(s: Settings) {
       webhooks: s.integrations.webhooks.map((w) => ({ ...w, secret: mask(w.secret), url: maskUrl(w.url) })),
       googleServiceAccount: s.integrations.googleServiceAccount ? "••••••" : "",
       serviceAccountEmail: serviceAccountEmail(s.integrations.googleServiceAccount),
+      firecrawlKey: mask(s.integrations.firecrawlKey),
+      hasFirecrawlKey: Boolean(s.integrations.firecrawlKey),
+      apifyToken: mask(s.integrations.apifyToken),
+      hasApifyToken: Boolean(s.integrations.apifyToken),
     },
   };
 }

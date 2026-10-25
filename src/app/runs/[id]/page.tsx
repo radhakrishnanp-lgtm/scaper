@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Ban, Download, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Ban, Download, Pause, Play, RotateCcw } from "lucide-react";
 import type { Job, JobLog } from "@/server/repo/jobs";
 import { CopyButton } from "@/components/data-table";
 import { JOB_KIND_LABEL, jobResultHref, JobStatusBadge } from "@/components/status";
@@ -69,11 +69,12 @@ function RunDetail({ id }: { id: string }) {
   const href = jobResultHref(job);
   const source = job.ref_id && SOURCE[job.kind]?.(job.ref_id);
 
-  const act = async (action: "cancel" | "retry") => {
+  const act = async (action: "cancel" | "retry" | "pause" | "resume") => {
     setBusy(true);
     try {
-      const res = await api<{ job: Job }>(`/api/jobs/${id}/${action}`, { method: "POST" });
+      const res = await api<{ job: Job; message?: string }>(`/api/jobs/${id}/${action}`, { method: "POST" });
       if (action === "retry") router.push(`/runs/${res.job.id}`);
+      else if (action === "pause" || action === "resume") { toast.success(res.message ?? (action === "pause" ? "Pausing" : "Resumed")); void poll(); }
       else { toast.success("Cancel requested", "The job stops after its current page."); void poll(); }
     } catch (e) { toast.error(`Could not ${action}`, errorText(e)); } finally { setBusy(false); }
   };
@@ -85,7 +86,9 @@ function RunDetail({ id }: { id: string }) {
         description={<span className="inline-flex flex-wrap items-center gap-2"><JobStatusBadge status={job.status} /><Badge>{JOB_KIND_LABEL[job.kind] ?? job.kind}</Badge><span>started by {job.trigger} · {dateTime(job.created_at)}</span></span>}
         actions={<>
           <Link prefetch={false} href="/runs"><Button variant="ghost" icon={<ArrowLeft className="size-4" />}>Runs</Button></Link>
-          {active && <Button variant="secondary" icon={<Ban className="size-4" />} loading={busy} onClick={() => void act("cancel")}>Cancel</Button>}
+          {(job.status === "queued" || (job.status === "running" && ["task", "scrape"].includes(job.kind))) && !job.private && <Button variant="secondary" icon={<Pause className="size-4" />} loading={busy} onClick={() => void act("pause")}>Pause</Button>}
+          {job.status === "paused" && <Button icon={<Play className="size-4" />} loading={busy} onClick={() => void act("resume")}>Resume</Button>}
+          {(active || job.status === "paused") && <Button variant="secondary" icon={<Ban className="size-4" />} loading={busy} onClick={() => void act("cancel")}>Cancel</Button>}
           {(job.status === "failed" || job.status === "cancelled") && <Button variant="secondary" icon={<RotateCcw className="size-4" />} loading={busy} onClick={() => void act("retry")}>Run again</Button>}
           {href && !active && <Link prefetch={false} href={href}><Button icon={<ArrowRight className="size-4" />}>Open result</Button></Link>}
         </>}

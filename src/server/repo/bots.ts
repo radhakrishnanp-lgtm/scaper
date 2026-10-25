@@ -148,11 +148,11 @@ export function botRunsToday(botId: string) {
 // ---------------------------------------------------------------------------------------------
 // Each bot's own memory
 
-export type BotMemory = { id: string; bot_id: string; kind: "fact" | "run"; key: string; value: string; created_at: string; updated_at: string };
+export type BotMemory = { id: string; bot_id: string; kind: "fact" | "run" | "lesson"; key: string; value: string; created_at: string; updated_at: string };
 export const MAX_BOT_FACTS = 60;
 const MAX_RUN_SUMMARIES = 20;
 
-export function listBotMemory(botId: string, kind?: "fact" | "run"): BotMemory[] {
+export function listBotMemory(botId: string, kind?: BotMemory["kind"]): BotMemory[] {
   return db().prepare(`SELECT * FROM bot_memory WHERE bot_id = ? ${kind ? "AND kind = ?" : ""} ORDER BY updated_at DESC`).all(...(kind ? [botId, kind] : [botId])) as BotMemory[];
 }
 
@@ -189,4 +189,64 @@ export function addRunSummary(botId: string, runId: string, text: string) {
     .run(newId(), botId, runId, text.replace(/\s+/g, " ").trim().slice(0, 600), t, t);
   db().prepare("DELETE FROM bot_memory WHERE bot_id = ? AND kind = 'run' AND id NOT IN (SELECT id FROM bot_memory WHERE bot_id = ? AND kind = 'run' ORDER BY updated_at DESC LIMIT ?)")
     .run(botId, botId, MAX_RUN_SUMMARIES);
+}
+
+// Self-evaluation: a grade per run, your thumbs up or down, and at most MAX_LESSONS lessons in the bot's memory.
+
+export const MAX_LESSONS = 10;
+export type BotEval = {
+  run_id: string; bot_id: string; score: number | null; met_job: boolean | null; summary: string | null; lessons: string[]; suggestion: string | null;
+  user_rating: -1 | 0 | 1; user_note: string; cost: number; created_at: string; updated_at: string;
+};
+type EvalRow = Omit<BotEval, "met_job" | "lessons"> & { met_job: number | null; lessons: string };
+const toEval = (r: EvalRow): BotEval => ({ ...r, met_job: r.met_job === null ? null : Boolean(r.met_job), lessons: parseJson<string[]>(r.lessons, []) });
+
+export function getBotEval(runId: string): BotEval | null {
+  const r = db().prepare("SELECT * FROM bot_evals WHERE run_id = ?").get(runId) as EvalRow | undefined;
+  return r ? toEval(r) : null;
+}
+
+export function listBotEvals(botId: string, limit = 40): BotEval[] {
+  return (db().prepare("SELECT * FROM bot_evals WHERE bot_id = ? ORDER BY created_at DESC LIMIT ?").all(botId, limit) as EvalRow[]).map(toEval);
+}
+
+export function saveBotEval(e: { run_id: string; bot_id: string; score: number; met_job: boolean; summary: string; lessons: string[]; suggestion: string | null; cost: number }) {
+  const t = now();
+  db().prepare(
+    `INSERT INTO bot_evals (run_id, bot_id, score, met_job, summary, lessons, suggestion, cost, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(run_id) DO UPDATE SET score = excluded.score, met_job = excluded.met_job, summary = excluded.summary, lessons = excluded.lessons,
+       suggestion = excluded.suggestion, cost = excluded.cost, updated_at = excluded.updated_at`,
+  ).run(e.run_id, e.bot_id, e.score, e.met_job ? 1 : 0, e.summary, JSON.stringify(e.lessons), e.suggestion, e.cost, t, t);
+  return getBotEval(e.run_id)!;
+}
+
+/** Your verdict on one run. A note is kept as a lesson the bot follows from its next run on. */
+export function setBotFeedback(botId: string, runId: string, rating: -1 | 0 | 1, note: string) {
+  const t = now();
+  db().prepare(
+    `INSERT INTO bot_evals (run_id, bot_id, user_rating, user_note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(run_id) DO UPDATE SET user_rating = excluded.user_rating, user_note = excluded.user_note, updated_at = excluded.updated_at`,
+  ).run(runId, botId, rating, note.trim().slice(0, 1000), t, t);
+  if (note.trim()) addLesson(botId, `user:${runId}`, `${rating < 0 ? "You said this run was wrong" : rating > 0 ? "You liked this run" : "You said"}: ${note.trim()}`);
+  else forgetLesson(botId, `user:${runId}`);
+  return getBotEval(runId)!;
+}
+
+/** Keeps a lesson (newest first); the oldest self-taught lessons go once there are more than MAX_LESSONS. Yours stay. */
+export function addLesson(botId: string, key: string, text: string) {
+  const v = text.replace(/\s+/g, " ").trim().slice(0, 400);
+  if (!v || looksSecret(v)) return false;
+  const t = now();
+  db().prepare(
+    `INSERT INTO bot_memory (id, bot_id, kind, key, value, created_at, updated_at) VALUES (?, ?, 'lesson', ?, ?, ?, ?)
+     ON CONFLICT(bot_id, kind, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(newId(), botId, key.slice(0, 80), v, t, t);
+  const own = listBotMemory(botId, "lesson").filter((l) => !l.key.startsWith("user:"));
+  const room = MAX_LESSONS - (listBotMemory(botId, "lesson").length - own.length);
+  for (const old of own.slice(Math.max(room, 3))) db().prepare("DELETE FROM bot_memory WHERE id = ?").run(old.id);
+  return true;
+}
+
+export function forgetLesson(botId: string, key: string) {
+  return db().prepare("DELETE FROM bot_memory WHERE bot_id = ? AND kind = 'lesson' AND key = ?").run(botId, key).changes > 0;
 }

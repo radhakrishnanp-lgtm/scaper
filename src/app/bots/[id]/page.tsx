@@ -3,9 +3,9 @@
 import { Suspense, use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Activity, Brain, ChevronLeft, Eraser, MessageSquare, Pause, Pencil, Play, Plus, Send, Settings2, Trash2 } from "lucide-react";
+import { Activity, Brain, ChevronLeft, Eraser, GraduationCap, MessageSquare, Pause, Pencil, Play, Plus, Send, Settings2, ThumbsDown, ThumbsUp, Trash2, Wand2 } from "lucide-react";
 import type { AgentRun } from "@/server/repo/agent";
-import type { BotMemory } from "@/server/repo/bots";
+import type { BotEval, BotMemory } from "@/server/repo/bots";
 import { ApprovalCard, Turn } from "@/components/agent-run";
 import { BotEditor, BotStatus, EVENT_LABEL, PERMISSIONS, type BotView, type Targets } from "@/components/bot-editor";
 import { ConfirmDialog } from "@/components/dialog";
@@ -18,7 +18,7 @@ import { dateTime, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
 
-type Detail = { bot: BotView; runs: AgentRun[]; memory: BotMemory[] };
+type Detail = { bot: BotView; runs: AgentRun[]; memory: BotMemory[]; evals: BotEval[] };
 type View = "activity" | "chat" | "memory" | "setup";
 
 const triggerLabel = (t?: string | null) => {
@@ -30,16 +30,86 @@ const triggerLabel = (t?: string | null) => {
   return t;
 };
 
-function Activity_({ bot, runs }: { bot: BotView; runs: AgentRun[] }) {
+const SCORE_TONE = (n: number) => (n >= 4 ? "success" : n === 3 ? "warning" : "danger") as "success" | "warning" | "danger";
+
+/** The bot's own grade of a run, and your 👍/👎 with a note, which it keeps as a lesson. */
+function Grade({ bot, run, e, onChanged }: { bot: BotView; run: AgentRun; e?: BotEval; onChanged: () => void }) {
+  const toast = useToast();
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const rating = e?.user_rating ?? 0;
+  const send = async (r: -1 | 0 | 1, n: string) => {
+    setBusy(String(r));
+    try {
+      await api(`/api/bots/${bot.id}/runs/${run.id}/feedback`, { body: { rating: r, note: n } });
+      toast.success(n.trim() ? `${bot.name} will remember that` : "Thanks", n.trim() ? "It follows your note from its next run on." : undefined);
+      setNote(null); onChanged();
+    } catch (err) { toast.error("Could not save", errorText(err)); } finally { setBusy(null); }
+  };
+  const apply = async () => {
+    if (!e?.suggestion) return;
+    setBusy("apply");
+    try {
+      const instructions = [bot.instructions.trim(), e.suggestion.trim()].filter(Boolean).join("\n");
+      await api(`/api/bots/${bot.id}`, { method: "PUT", body: { instructions: instructions.slice(0, 4000) } });
+      toast.success("Added to its instructions", e.suggestion); onChanged();
+    } catch (err) { toast.error("Could not change the instructions", errorText(err)); } finally { setBusy(null); }
+  };
+  if (run.status === "running") return null;
+  const applied = Boolean(e?.suggestion && bot.instructions.includes(e.suggestion.trim()));
+  return (
+    <div className="space-y-2 rounded-xl border border-border bg-surface-2/40 p-3 text-sm">
+      {e?.score ? (
+        <>
+          <p className="flex flex-wrap items-center gap-2">
+            <GraduationCap className="size-4 text-muted" aria-hidden />
+            <Badge tone={SCORE_TONE(e.score)}>{e.score}/5</Badge>
+            <span className="text-xs text-muted">{e.met_job ? "did its job" : "did not finish its job"}</span>
+            <span className="min-w-0 flex-1">{e.summary}</span>
+          </p>
+          {e.lessons.length > 0 && <ul className="list-disc space-y-0.5 pl-9 text-xs text-muted">{e.lessons.map((l) => <li key={l}>Learned: {l}</li>)}</ul>}
+          {e.suggestion && (
+            <p className="flex flex-wrap items-center gap-2 text-xs"><span className="text-muted">Suggests adding to its instructions:</span> <span className="min-w-0 flex-1">“{e.suggestion}”</span>
+              {applied ? <Badge tone="success">added</Badge> : <Button size="sm" variant="ghost" icon={<Wand2 className="size-4" />} loading={busy === "apply"} onClick={() => void apply()}>Apply</Button>}
+            </p>
+          )}
+        </>
+      ) : bot.selfEval ? <p className="text-xs text-muted">Grading this run…</p> : null}
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-xs text-muted">Was this run right?</span>
+        <IconButton size="sm" label="Good run" aria-pressed={rating > 0} className={rating > 0 ? "bg-success/15 text-success" : ""} disabled={busy !== null} onClick={() => void send(rating > 0 ? 0 : 1, e?.user_note ?? "")}><ThumbsUp className="size-4" /></IconButton>
+        <IconButton size="sm" label="Bad run" aria-pressed={rating < 0} className={rating < 0 ? "bg-danger/15 text-danger" : ""} disabled={busy !== null} onClick={() => { if (rating < 0) void send(0, e?.user_note ?? ""); else setNote(e?.user_note ?? ""); }}><ThumbsDown className="size-4" /></IconButton>
+        {note === null && <Button size="sm" variant="ghost" onClick={() => setNote(e?.user_note ?? "")}>{e?.user_note ? "Edit note" : "Add a note"}</Button>}
+        {e?.user_note && note === null && <span className="min-w-0 flex-1 truncate text-xs text-muted" title={e.user_note}>“{e.user_note}”</span>}
+      </div>
+      {note !== null && (
+        <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(ev) => { ev.preventDefault(); void send(rating === 0 && note.trim() ? -1 : rating, note); }}>
+          <Input aria-label="What should it do differently?" className="min-w-0 flex-1" autoFocus value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="What should it do differently? e.g. “Skip sponsored videos”" />
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" loading={busy !== null}>Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => setNote(null)}>Cancel</Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function Activity_({ bot, runs, evals, onChanged }: { bot: BotView; runs: AgentRun[]; evals: BotEval[]; onChanged: () => void }) {
   const list = runs.filter((r) => r.trigger !== "chat");
   if (!list.length) return <EmptyState icon={<Activity className="size-5" />} title="No runs yet">Run it now, or wait for its schedule or events. Each run&apos;s steps and report show up here.</EmptyState>;
+  const byRun = new Map(evals.map((e) => [e.run_id, e]));
+  const graded = evals.filter((e) => e.score);
+  const avg = graded.length ? graded.reduce((s, e) => s + (e.score ?? 0), 0) / graded.length : null;
   return (
     <ul className="space-y-4">
+      {avg !== null && <li className="text-sm text-muted">Average grade over its last {graded.length} graded runs: <strong className="text-text">{avg.toFixed(1)}/5</strong>. Your 👍/👎 and notes teach it what you want.</li>}
       {list.map((r, i) => (
         <li key={r.id}>
           <Card className="space-y-3 p-4">
             <p className="flex flex-wrap items-center gap-2 text-sm"><Badge>{triggerLabel(r.trigger)}</Badge><time className="text-muted" title={dateTime(r.created_at)}>{timeAgo(r.created_at)}</time></p>
             <Turn run={r} compact={i > 0} hidePrompt avatar={<span aria-hidden>{bot.emoji}</span>} who={bot.name} />
+            <Grade bot={bot} run={r} e={byRun.get(r.id)} onChanged={onChanged} />
           </Card>
         </li>
       ))}
@@ -86,6 +156,7 @@ function Memory({ bot, memory, onChanged }: { bot: BotView; memory: BotMemory[];
   const [clearing, setClearing] = useState(false);
   const facts = memory.filter((m) => m.kind === "fact");
   const runs = memory.filter((m) => m.kind === "run");
+  const lessons = memory.filter((m) => m.kind === "lesson");
   const add = async () => {
     setErrors({});
     try { await api(`/api/bots/${bot.id}/memory`, { body: { key, value } }); setKey(""); setValue(""); onChanged(); }
@@ -122,6 +193,22 @@ function Memory({ bot, memory, onChanged }: { bot: BotView; memory: BotMemory[];
           <Field label="Fact" error={errors.value}>{(f) => <Input {...f} value={value} onChange={(e) => setValue(e.target.value)} placeholder="Under ₹30,000, no refurbished" />}</Field>
           <Button type="submit" variant="secondary" icon={<Plus className="size-4" />} disabled={!key.trim() || !value.trim()}>Add</Button>
         </form>
+      </Card>
+      <Card className="p-4">
+        <h3 className="mb-1 font-semibold">Lessons <span className="text-sm font-normal text-muted">({lessons.length})</span></h3>
+        <p className="mb-3 text-xs text-muted">{bot.selfEval ? "Rules it taught itself by grading its runs, and the notes you left on runs. It reads them at the start of every run." : "Self-grading is off (Edit → more options), so only your notes on runs end up here."}</p>
+        {lessons.length ? (
+          <ul className="divide-y divide-border rounded-xl border border-border">
+            {lessons.map((m) => (
+              <li key={m.id} className="flex items-start gap-3 px-3 py-2 text-sm">
+                <Badge tone={m.key.startsWith("user:") ? "accent" : "neutral"}>{m.key.startsWith("user:") ? "you" : "self"}</Badge>
+                <span className="min-w-0 flex-1">{m.value}</span>
+                <span className="shrink-0 text-xs text-muted">{timeAgo(m.updated_at)}</span>
+                <IconButton size="sm" label="Forget this lesson" onClick={() => void forget(m)}><Trash2 className="size-4" /></IconButton>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-sm text-muted">None yet. Leave a 👎 and a note on a run in Activity, and it will follow it.</p>}
       </Card>
       <Card className="p-4">
         <h3 className="mb-3 font-semibold">Recent runs it remembers</h3>
@@ -214,7 +301,7 @@ function BotPage({ id }: { id: string }) {
         { value: "memory", label: "Memory", icon: <Brain className="size-4" />, count: d.memory.filter((m) => m.kind === "fact").length },
         { value: "setup", label: "Setup", icon: <Settings2 className="size-4" /> },
       ]} />
-      {view === "activity" && <Activity_ bot={bot} runs={d.runs} />}
+      {view === "activity" && <Activity_ bot={bot} runs={d.runs} evals={d.evals} onChanged={() => void detail.reload()} />}
       {view === "chat" && <Chat bot={bot} runs={d.runs} onChanged={() => void detail.reload()} />}
       {view === "memory" && <Memory bot={bot} memory={d.memory} onChanged={() => void detail.reload()} />}
       {view === "setup" && <Setup bot={bot} />}

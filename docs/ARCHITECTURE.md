@@ -35,7 +35,10 @@ repo/ ── prepared statements only ── SQLite (data/scaper.db, WAL)
 | SQLite + a repo layer | No database server to install. All SQL sits in `src/server/repo`, so moving to Postgres later touches one folder. |
 | In-process scheduler with leases | Due rows are "claimed" by pushing `next_check_at` forward in a transaction, so a slow check never runs twice. Survives hot reload via a `globalThis` singleton. |
 | A durable job queue in SQLite | Every piece of work (task run, quick scrape, watcher check, price refresh, deal search, backup) is a job row. The Runs page, progress, logs, cancel and retry all come from one place, `unique` stops the same item running twice, and jobs left "running" by a crash are marked failed at start-up. A small in-process pump runs up to "Jobs at the same time" jobs; the per-host turn still keeps one request at a time per site. |
-| Two fetch modes | Fast (undici HTTP) is cheap and light; Browser (Playwright Chromium) runs JavaScript. Each job picks one. |
+| Three fetch modes | Fast (undici HTTP) is cheap and light; Browser (Playwright Chromium) runs JavaScript; Firecrawl (your key) loads the page on Firecrawl's side and returns HTML and Markdown, still after Scaper's own robots.txt and site checks. Each job picks one. |
+| Pause is a flag, not a cancel | A paused task run stops at the top of its next page (or detail page), saves a checkpoint (queue, visited pages, rows so far) in `jobs.checkpoint` and ends as `paused`. Resume puts the job back in the queue with that checkpoint. A checkpoint is also saved every 5 pages, so a crash leaves a paused job instead of a failed one. |
+| Apify as a task source | A task's `options.source` is `web` or `apify`. An Apify task runs the actor with item and cost caps, waits for it by polling, and turns its items into a dataset, so everything after the fetch (dedupe, transforms, checks, new-row alerts, exports, downloads) is shared with web tasks. |
+| Downloads outside the job queue | Files can take minutes, so downloads are their own small queue (`downloads` table, a few at a time, pumped by the scheduler tick). Only the start of each request waits for the site's turn; the transfer does not block other requests to that site. |
 | Politeness in one place | `fetchPage` is the only way to load a page, so every feature (scraper, watchers, deals, agent) gets robots.txt, rate limits and backoff. |
 | Own price history | Store "M.R.P." values are often inflated. Scaper judges deals against its own snapshots. |
 | OpenAI-compatible client | One small client works with OpenAI, OpenRouter, Groq, Together, Ollama, LM Studio and vLLM. |
@@ -58,7 +61,8 @@ repo/ ── prepared statements only ── SQLite (data/scaper.db, WAL)
 | `site_rules` · `host_stats` | Per-site rules (slower delay, mode, headers, cookies, pause) and daily request stats | Stats kept 90 days |
 | `notifications` | Alert inbox | Read alerts older than 90 days pruned |
 | `agent_runs` | Agent transcripts; `parent_id` links follow-ups; `bot_id` and `trigger` mark bot runs | Bot runs are left out of the agent page's list |
-| `bots` · `bot_memory` | Your bots (settings as JSON, `next_run_at` for the scheduler, last outcome) and each bot's own memory (facts, plus a summary of each of its last 20 runs) | Memory is deleted with the bot |
+| `bots` · `bot_memory` · `bot_evals` | Your bots (settings as JSON, `next_run_at` for the scheduler, last outcome), each bot's own memory (facts, lessons, plus a summary of each of its last 20 runs) and each run's grade with your 👍/👎 and note | Memory and grades are deleted with the bot |
+| `downloads` | The download manager: one row per file with status, bytes, total, whether the server allows resuming, sha256 and the error | Finished rows cleared on request |
 | `ai_usage` | Requests and tokens per day | Enforces the daily cap |
 | `api_tokens` | Hashed API tokens | |
 | `event_log` | Audit log (Logs page) | Kept N days |
@@ -68,6 +72,8 @@ Migrations live in `src/server/db.ts` (numbered, applied in a transaction at sta
 ## Bots
 
 A bot run is an ordinary agent run (`startAgent` with a `bot` option): the bot's section (role, job, instructions, permission, alert and end conditions, its memory and recent runs) is added after the usual system prompt, its tools are filtered by `toolsFor` (bot-only memory and message tools in, bot-management tools out, changing tools out for read-only bots), and two hooks tell the bot when the run waits for an approval and when it ends. The scheduler starts due bots every tick (`runDueBots`); `startBotEvents` listens on the in-process bus for `task_run` events and alerts (`notification` with its kind), maps them to bot events and wakes the bots that subscribe, respecting each bot's cooldown. Alerts go through `deliver`, which adds the channels from Settings → Alerts → "Where each alert goes" (`routeChannels`) to the item's own channels.
+
+Self-evaluation: when a bot run ends and `selfEval` is on, `evaluateBotRun` asks the fast model to grade it (tool digest, report, the bot's lessons and your recent feedback; no page text), stores the grade in `bot_evals` and up to two lessons in `bot_memory` (kind `lesson`). `botSystemPrompt` lists the lessons on every run. Your feedback on a run is stored on the same row and its note becomes a `user:` lesson.
 
 ## First bottleneck and plan
 

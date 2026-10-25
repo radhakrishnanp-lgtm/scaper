@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, Copy, Crosshair, FileUp, FlaskConical, Globe, Plus, Save, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Crosshair, FileUp, Flame, FlaskConical, Globe, Plus, Puzzle, Save, Trash2, X, Zap } from "lucide-react";
 import type { Task } from "@/server/repo/scrapes";
 import { compilePatterns, matchesAny, parseUrlList } from "@/server/tasks/urls";
 import { taskSchema, type FetchMode, type NotifyChannels, type TaskOptions } from "@/lib/schemas";
@@ -12,6 +12,7 @@ import { cn } from "@/lib/cn";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
 import { Dialog } from "./dialog";
+import { ApifySourceEditor, actorPage, APIFY_TEMPLATES } from "./apify-source";
 import { ElementPicker } from "./element-picker";
 import { ExtractEditor, FieldsEditor, newField, type ExtractValue } from "./extract-editor";
 import { ChannelPicker, PaginationField, ScheduleField, type ScheduleValue } from "./form-bits";
@@ -44,7 +45,7 @@ function tabFor(path: string): TabId {
   if (/^options\.(startUrls|categories|sitemap|inputs|pagination|crawl|limits)/.test(path)) return "pages";
   if (/^options\.steps/.test(path)) return "steps";
   if (/^options\.(dedupeBy|quality|incremental|includeSourceUrl)/.test(path)) return "data";
-  if (/^options\.(monitor|output)/.test(path)) return "alerts";
+  if (/^options\.(monitor|output|downloads)/.test(path)) return "alerts";
   if (/^(scheduleMinutes|cron|options\.retries)/.test(path)) return "schedule";
   return "start";
 }
@@ -86,6 +87,8 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
   const [patternTest, setPatternTest] = useState("");
   const [saved, setSaved] = useState(() => JSON.stringify(buildPayload(initial)));
   const tagSource = useApi<{ tags: string[] }>("/api/tasks");
+  const services = useApi<{ firecrawl: { configured: boolean }; apify: { configured: boolean } }>("/api/integrations");
+  const apify = d.options.source.type === "apify" ? d.options.source : null;
 
   const set = useCallback(<K extends keyof TaskDraft>(k: K, v: TaskDraft[K]) => setD((x) => ({ ...x, [k]: v })), []);
   const setOpt = useCallback(<K extends keyof TaskOptions>(k: K, v: TaskOptions[K]) => setD((x) => ({ ...x, options: { ...x.options, [k]: v } })), []);
@@ -154,6 +157,9 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
         pagination: body.options.pagination.type === "next" || body.options.pagination.type === "click" ? { ...body.options.pagination, maxPages: Math.min(body.options.pagination.maxPages, 3) } : body.options.pagination,
         output: { ...body.options.output, files: [], webhook: false, sheets: { ...body.options.output.sheets, enabled: false } }, incremental: false,
         monitor: { ...body.options.monitor, enabled: false }, quality: { ...body.options.quality, alert: false },
+        // A test of an Apify task reads only a few items, so it costs cents.
+        source: body.options.source.type === "apify" ? { ...body.options.source, maxItems: Math.min(body.options.source.maxItems, 10) } : body.options.source,
+        downloads: { ...body.options.downloads, columns: [] },
       };
       const res = await api<{ run: RunView | null; job: { error: string | null; status: string } }>("/api/scrape", { body: { url: body.url, mode: body.mode, extract: body.extract, options } });
       setTest({ run: res.run, error: res.run ? undefined : res.job.error ?? `The test is still ${res.job.status}. Check the Runs page.` });
@@ -175,14 +181,17 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
     setOpt("inputs", await file.text());
   };
 
+  // An Apify task has no pages to read, so the page tabs are hidden.
   const tabs: { value: TabId; label: string; count?: number | null }[] = [
-    { value: "start", label: "Start" },
-    { value: "pages", label: "Pages" },
-    { value: "extract", label: "Extract" },
-    { value: "steps", label: "Page actions", count: o.steps.length || null },
-    { value: "data", label: "Data quality" },
-    { value: "alerts", label: "Alerts & output" },
-    { value: "schedule", label: "Schedule" },
+    { value: "start" as const, label: "Start" },
+    ...(apify ? [] : [
+      { value: "pages" as const, label: "Pages" },
+      { value: "extract" as const, label: "Extract" },
+      { value: "steps" as const, label: "Page actions", count: o.steps.length || null },
+    ]),
+    { value: "data" as const, label: "Data quality" },
+    { value: "alerts" as const, label: "Alerts & output" },
+    { value: "schedule" as const, label: "Schedule" },
   ];
 
   const patternResult = patternTest.trim() ? {
@@ -212,18 +221,48 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
                   <Field label="Name" error={err("name")}>{(p) => <Input {...p} value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="Laptops on example.com" autoFocus={!id} />}</Field>
                   <Field label="Tags" hint="Group and filter tasks.">{(p) => <TagInput id={p.id} value={d.tags} onChange={(v) => set("tags", v)} suggestions={tagSource.data?.tags ?? []} />}</Field>
                 </div>
-                <Field label="Start URL" error={err("url")} hint={o.inputs.trim() ? "You can use {{column}} from your CSV inputs here." : "The first page to open. Add more on the Pages tab."}>
-                  {(p) => <Input {...p} inputMode="url" value={d.url} onChange={(e) => set("url", e.target.value)} placeholder="https://www.example.com/category/laptops" />}
-                </Field>
+                {!apify && (
+                  <Field label="Start URL" error={err("url")} hint={o.inputs.trim() ? "You can use {{column}} from your CSV inputs here." : "The first page to open. Add more on the Pages tab."}>
+                    {(p) => <Input {...p} inputMode="url" value={d.url} onChange={(e) => set("url", e.target.value)} placeholder="https://www.example.com/category/laptops" />}
+                  </Field>
+                )}
                 <Field label="Notes" hint="Optional. What this collects and why.">{(p) => <Textarea {...p} rows={2} value={d.description} onChange={(e) => set("description", e.target.value)} />}</Field>
               </Section>
-              <Section title="How to load pages">
-                <Segmented label="Fetch mode" value={d.mode} onChange={(v) => set("mode", v)} options={[
-                  { value: "browser", label: "Browser", icon: <Globe className="size-4" /> },
-                  { value: "fast", label: "Fast", icon: <Zap className="size-4" /> },
+              <Section title="Where the rows come from">
+                <Segmented label="Source" value={o.source.type} onChange={(v) => {
+                  if (v === "apify") {
+                    const t = APIFY_TEMPLATES[0]!;
+                    setD((x) => ({ ...x, url: actorPage(t.actorId), options: { ...x.options, source: { type: "apify", actorId: t.actorId, input: t.input, maxItems: 50, timeoutSeconds: 900, maxChargeUsd: 1 } } }));
+                  } else setOpt("source", { type: "web" });
+                }} options={[
+                  { value: "web", label: "Web pages", icon: <Globe className="size-4" /> },
+                  { value: "apify", label: "Apify actor", icon: <Puzzle className="size-4" /> },
                 ]} />
-                <p className="text-xs text-muted">{d.mode === "browser" ? "A real Chromium runs the page's JavaScript. Needed for page actions, Next buttons, Load more and infinite scroll." : "Plain HTTP without JavaScript: 5–20× faster and lighter. Works for most server-rendered sites, feeds and APIs."}</p>
+                <p className="text-xs text-muted">{apify ? "An actor from the Apify Store runs on your account (YouTube, Instagram, TikTok, X, Google Maps …) and its results are this task's rows." : "Scaper loads the pages and reads them with your selectors, Auto or your AI."}</p>
               </Section>
+              {apify ? (
+                <Section title="Apify actor">
+                  <ApifySourceEditor value={apify} configured={Boolean(services.data?.apify.configured)} error={err("options.source.actorId")}
+                    onChange={(v) => setD((x) => ({ ...x, url: v.actorId.includes("~") ? actorPage(v.actorId) : x.url, options: { ...x.options, source: v } }))}
+                    onTemplate={(t) => setD((x) => ({
+                      ...x, name: x.name || t.name, url: actorPage(t.actorId),
+                      options: {
+                        ...x.options, source: { type: "apify", actorId: t.actorId, input: t.input, maxItems: apify.maxItems, timeoutSeconds: apify.timeoutSeconds, maxChargeUsd: apify.maxChargeUsd },
+                        dedupeBy: t.keyFields, monitor: { ...x.options.monitor, keyFields: t.keyFields },
+                      },
+                    }))} />
+                </Section>
+              ) : (
+                <Section title="How to load pages">
+                  <Segmented label="Fetch mode" value={d.mode} onChange={(v) => set("mode", v)} options={[
+                    { value: "browser", label: "Browser", icon: <Globe className="size-4" /> },
+                    { value: "fast", label: "Fast", icon: <Zap className="size-4" /> },
+                    { value: "firecrawl", label: "Firecrawl", icon: <Flame className="size-4" /> },
+                  ]} />
+                  <p className="text-xs text-muted">{d.mode === "browser" ? "A real Chromium runs the page's JavaScript. Needed for page actions, Next buttons, Load more and infinite scroll." : d.mode === "fast" ? "Plain HTTP without JavaScript: 5–20× faster and lighter. Works for most server-rendered sites, feeds and APIs." : "Your Firecrawl account loads each page in its browsers; Scaper reads it with your selectors, Auto or your own AI. Costs Firecrawl credits per page; page actions need Browser mode."}</p>
+                  {d.mode === "firecrawl" && services.data && !services.data.firecrawl.configured && <Callout tone="warning" title="Add your Firecrawl key first">Open <Link prefetch={false} href="/integrations?tab=firecrawl" className="text-accent hover:underline">Integrations → Firecrawl</Link> and paste your API key.</Callout>}
+                </Section>
+              )}
             </>
           )}
 
@@ -438,6 +477,16 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
               </Section>
               <Section title="Send alerts to" description="For new/removed rows, failed quality checks and health alerts.">
                 <ChannelPicker value={o.monitor.channels} onChange={(v) => setOpt("monitor", { ...o.monitor, channels: v })} />
+              </Section>
+              <Section title="Download files" description="After each good run, the links in these columns go to the download manager: product images, videos, PDFs. Already downloaded links are skipped.">
+                <div className="grid gap-4 md:grid-cols-[1fr_200px_140px]">
+                  <Field label="Columns with file links" hint={apify ? "Run a test first to see the actor's column names (e.g. videoUrl, displayUrl, thumbnailUrl)." : "Usually an image or link column."}>
+                    {(p) => <TagInput id={p.id} value={o.downloads.columns} onChange={(v) => setOpt("downloads", { ...o.downloads, columns: v })} suggestions={[...fieldNames, ...(test?.run?.result?.datasets[0]?.columns ?? [])]} max={5} placeholder="image" />}
+                  </Field>
+                  <Field label="Folder" hint="Empty = the task's name.">{(p) => <Input {...p} value={o.downloads.folder} onChange={(e) => setOpt("downloads", { ...o.downloads, folder: e.target.value })} placeholder={d.name || "Task name"} />}</Field>
+                  <Field label="At most per run">{(p) => <Input {...p} type="number" min={1} max={2000} value={o.downloads.maxFiles} onChange={(e) => setOpt("downloads", { ...o.downloads, maxFiles: Math.max(1, Math.round(Number(e.target.value) || 1)) })} />}</Field>
+                </div>
+                {o.downloads.columns.length > 0 && <p className="text-xs text-muted">See and pause them on <Link prefetch={false} href="/downloads" className="text-accent hover:underline">Downloads</Link>.</p>}
               </Section>
               <Section title="Output" description="Every run is always kept on the Data page. These are extra copies.">
                 <div className="flex flex-wrap gap-4">

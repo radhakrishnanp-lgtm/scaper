@@ -53,6 +53,13 @@ function TaskDetail({ id }: { id: string }) {
   const avgMs = okRuns.length ? okRuns.reduce((s, r) => s + r.duration_ms, 0) / okRuns.length : null;
   const origin = typeof window === "undefined" ? "http://localhost:3000" : window.location.origin;
 
+  const pauseRun = async (jobId: string) => {
+    setBusy("pause-run");
+    try {
+      const r = await api<{ message?: string }>(`/api/jobs/${jobId}/pause`, { method: "POST" });
+      toast.success(r.message ?? "Pausing", "Resume it from Runs, or press Run now.");
+    } catch (e) { toast.error("Could not pause", errorText(e)); } finally { setBusy(null); }
+  };
   const runNow = async () => {
     setBusy("run");
     try {
@@ -112,7 +119,10 @@ function TaskDetail({ id }: { id: string }) {
           <Card className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className="flex items-center gap-2"><JobStatusBadge status={running.status} />{running.progress.label ?? "Starting…"}</span>
-              <Link prefetch={false} href={`/runs/${running.id}`} className="font-medium text-accent hover:underline">Live log</Link>
+              <span className="flex items-center gap-3">
+                <Button size="sm" variant="ghost" icon={<Pause className="size-4" />} loading={busy === "pause-run"} onClick={() => void pauseRun(running.id)}>Pause</Button>
+                <Link prefetch={false} href={`/runs/${running.id}`} className="font-medium text-accent hover:underline">Live log</Link>
+              </span>
             </div>
             <Progress className="mt-3" label="Task progress" value={running.progress.total ? running.progress.done ?? 0 : null} max={running.progress.total ?? 100} />
             {running.progress.rows !== undefined && <p className="mt-1.5 text-xs text-muted">{plural(running.progress.rows, "row")} so far</p>}

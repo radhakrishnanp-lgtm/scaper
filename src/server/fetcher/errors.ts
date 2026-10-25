@@ -1,4 +1,4 @@
-export type FetchErrorCode = "robots" | "blocked" | "network" | "timeout" | "private" | "http" | "too_large" | "browser" | "step" | "selector" | "cancelled" | "paused";
+export type FetchErrorCode = "robots" | "blocked" | "network" | "timeout" | "private" | "http" | "too_large" | "browser" | "step" | "selector" | "cancelled" | "paused" | "service";
 
 /** A fetch failure with a message written for the person using the app. */
 export class FetchError extends Error {

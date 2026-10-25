@@ -304,6 +304,10 @@ function DataTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
           <Field label="Job history (days)">{(p) => <Input {...p} type="number" min={1} max={365} value={v.keepJobsDays} onChange={(e) => s.set({ keepJobsDays: Number(e.target.value) || 1 })} />}</Field>
           <Field label="Logs (days)">{(p) => <Input {...p} type="number" min={1} max={365} value={v.keepEventsDays} onChange={(e) => s.set({ keepEventsDays: Number(e.target.value) || 1 })} />}</Field>
         </div>
+        <div className="grid gap-4 md:grid-cols-4">
+          <Field label="Downloads at once" hint="Files the download manager fetches in parallel.">{(p) => <Input {...p} type="number" min={1} max={8} value={v.downloadConcurrency} onChange={(e) => s.set({ downloadConcurrency: Math.min(8, Math.max(1, Math.round(Number(e.target.value) || 1))) })} />}</Field>
+          <Field label="Largest download (MB)" hint="Bigger files are stopped and marked failed.">{(p) => <Input {...p} type="number" min={1} max={50000} value={v.maxDownloadMb} onChange={(e) => s.set({ maxDownloadMb: Math.max(1, Math.round(Number(e.target.value) || 1)) })} />}</Field>
+        </div>
         <div className="flex flex-wrap items-end gap-6">
           <Switch label="Back up once a day" description="Taken while Scaper runs; the oldest beyond the limit are removed." checked={v.autoBackup} onChange={(x) => s.set({ autoBackup: x })} />
           <Field label="Backups to keep">{(p) => <Input {...p} type="number" min={1} max={60} className="w-28" value={v.keepBackups} onChange={(e) => s.set({ keepBackups: Number(e.target.value) || 1 })} />}</Field>

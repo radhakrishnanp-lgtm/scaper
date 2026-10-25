@@ -11,6 +11,8 @@ import { extractWithSelectors } from "../extract/selectors";
 import { serializeDataset } from "../export/formats";
 import { fetchPage, FetchError } from "../fetcher";
 import { emitWebhook } from "../integrations/webhooks";
+import { itemsToDataset, runActor } from "../integrations/apify";
+import type { IntegrationError } from "../integrations/firecrawl";
 import { deliver } from "../notify";
 import { afterTaskRun } from "../ops/after-run";
 import { diagnoseRun, expectedRange, type DiagnoseInput } from "../ops/diagnose";
@@ -33,12 +35,29 @@ export type TaskRunInput = {
   recipeId?: string | null; taskName?: string; jobId?: string | null;
   /** The task's setup version this run uses, and what started it (manual, schedule, api, repair). */
   version?: number | null; trigger?: string;
+  /** Carry on from a paused or interrupted run of the same job. */
+  resume?: TaskCheckpoint | null;
+};
+
+type QueueItem = { url: string; depth: number; pageNo: number; vars?: Record<string, string>; category?: string };
+/** Everything a run needs to carry on later: what is left, what is done, and the rows so far. */
+export type TaskCheckpoint = {
+  v: 1; queue: QueueItem[]; visited: string[]; pages: PageLog[]; datasets: Dataset[]; notes: string[]; newlySeen: string[];
+  fetched: number; okPages: number; aiFallbackPages: number; firstError: string | null; firstErr: DiagnoseInput["error"];
+  first: { title: string; finalUrl: string; meta: ScrapeResult["meta"] } | null; startedAt: number;
 };
 export type RunHooks = {
   signal?: AbortSignal;
   log?: (level: "info" | "warn" | "error", message: string, data?: Record<string, unknown>) => void;
   progress?: (p: { done?: number; total?: number; rows?: number; label?: string }) => void;
+  /** Pause: checked before each page and each detail page; the run saves a checkpoint and throws `paused()`. */
+  shouldPause?: () => boolean;
+  checkpoint?: (cp: TaskCheckpoint) => void;
+  paused?: () => Error;
 };
+
+/** How often a run saves where it is, so a restart loses little. */
+const CHECKPOINT_EVERY_PAGES = 5;
 
 const FURNITURE = ["Links", "Images", "Headings"];
 const MAX_PAGE_LOGS = 1000;
@@ -71,7 +90,7 @@ const withVars = (steps: BrowserStep[] | undefined, vars: Record<string, string>
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "task";
 
-const isBlockedError = (e: unknown) => e instanceof FetchError && ["blocked", "robots", "paused"].includes(e.code);
+const isBlockedError = (e: unknown) => e instanceof FetchError && ["blocked", "robots", "paused", "service"].includes(e.code);
 const isCancelError = (e: unknown, signal?: AbortSignal) => signal?.aborted || (e instanceof FetchError && e.code === "cancelled");
 
 /** Rows that are new or gone compared with the previous run, keyed by the chosen fields. */
@@ -164,7 +183,6 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
 
   // CSV inputs: one start URL per row, with {{column}} filled in (URL-encoded).
   const inputs = o.inputs.trim() ? csvRecords(o.inputs) : [];
-  type QueueItem = { url: string; depth: number; pageNo: number; vars?: Record<string, string>; category?: string };
   let queue: QueueItem[];
   if (o.categories.length) {
     // Category scrape: read each category page (with its own pagination) instead of the start URL.
@@ -174,32 +192,85 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
   } else {
     queue = parseUrlList([input.url, ...o.startUrls]).map((url) => ({ url, depth: 0, pageNo: 1 }));
   }
-  if (o.sitemap.url) queue.push(...(await readSitemapUrls(o.sitemap, hooks)).map((url) => ({ url, depth: 0, pageNo: 1 })));
+  const resume = input.resume?.v === 1 ? input.resume : null;
+  if (resume) queue = resume.queue;
+  else if (o.sitemap.url) queue.push(...(await readSitemapUrls(o.sitemap, hooks)).map((url) => ({ url, depth: 0, pageNo: 1 })));
   const starts = queue;
   const incremental = Boolean(o.incremental && input.recipeId);
-  const newlySeen: string[] = [];
-  const visited = new Set<string>();
+  const newlySeen: string[] = [...(resume?.newlySeen ?? [])];
+  const visited = new Set<string>(resume?.visited ?? []);
   const include = compilePatterns(o.crawl.include);
   const exclude = compilePatterns(o.crawl.exclude);
-  const pages: PageLog[] = [];
+  const pages: PageLog[] = [...(resume?.pages ?? [])];
   const merged = new Map<string, Dataset>();
-  const notes: string[] = [];
-  let first: Pick<ScrapeResult, "title" | "finalUrl" | "meta" | "suggestions" | "screenshot"> | null = null;
-  let firstError: string | null = null;
-  let firstErr: DiagnoseInput["error"] = null;
+  if (resume) mergeInto(merged, resume.datasets);
+  const notes: string[] = [...(resume?.notes ?? [])];
+  let first: Pick<ScrapeResult, "title" | "finalUrl" | "meta" | "suggestions" | "screenshot"> | null = resume?.first ?? null;
+  let firstError: string | null = resume?.firstError ?? null;
+  let firstErr: DiagnoseInput["error"] = resume?.firstErr ?? null;
   let evidence: string | null = null;
   let firstHtml: string | null = null;
   let firstText: string | null = null;
   let blocked = false;
   let cancelled = false;
-  let fetched = 0;
-  let okPages = 0;
-  let aiFallbackPages = 0;
+  let fetched = resume?.fetched ?? 0;
+  let okPages = resume?.okPages ?? 0;
+  let aiFallbackPages = resume?.aiFallbackPages ?? 0;
   const mainRows = () => [...merged.values()][mainDatasetIndex([...merged.values()])]?.rows.length ?? 0;
+  const snapshot = (): TaskCheckpoint => ({
+    v: 1, queue: [...queue], visited: [...visited], pages: [...pages], datasets: [...merged.values()].map((d) => ({ ...d, rows: [...d.rows], columns: [...d.columns] })),
+    notes: [...notes], newlySeen: [...newlySeen], fetched, okPages, aiFallbackPages, firstError, firstErr,
+    first: first ? { title: first.title, finalUrl: first.finalUrl, meta: first.meta } : null, startedAt: resume?.startedAt ?? started,
+  });
+  // Where the run stood before the current page, so a pause in the middle of a page drops only that page's partial work.
+  let mark: TaskCheckpoint | null = null;
+  const pauseHere = () => {
+    const cp = mark ?? snapshot();
+    hooks.checkpoint?.(cp);
+    log("info", `Paused after ${cp.fetched} page(s) with ${cp.queue.length} left.`);
+    throw hooks.paused?.() ?? new Error("Paused.");
+  };
 
-  log("info", `Starting with ${starts.length} URL(s), up to ${o.limits.maxPages} page(s).`);
+  // Apify source: an actor run on your account produces the rows; the rest of the run (dedupe, checks, alerts, files) is the same.
+  if (o.source.type === "apify" && !resume) {
+    const src = o.source;
+    queue = [];
+    fetched = 1;
+    const t0 = Date.now();
+    log("info", `Starting the Apify actor ${src.actorId} (up to ${src.maxItems} items${src.maxChargeUsd ? `, at most $${src.maxChargeUsd}` : ""}).`);
+    hooks.progress?.({ done: 0, total: 1, rows: 0, label: `Apify: ${src.actorId}` });
+    try {
+      const { run, items } = await runActor(src.actorId, src.input, {
+        maxItems: Math.min(src.maxItems, o.limits.maxRows), timeoutSeconds: src.timeoutSeconds, maxChargeUsd: src.maxChargeUsd, signal: hooks.signal,
+        onStarted: (r) => log("info", `Actor run ${r.id} started: https://console.apify.com/actors/runs/${r.id}`),
+        onProgress: (r) => hooks.progress?.({ done: 0, total: 1, rows: 0, label: `Apify: ${r.status.toLowerCase()}${r.statusMessage ? ` · ${r.statusMessage.slice(0, 80)}` : ""}` }),
+      });
+      const ds = itemsToDataset(items, "Items");
+      mergeInto(merged, [ds]);
+      okPages = 1;
+      first = { title: src.actorId, finalUrl: input.url, meta: { apify_run: run.id, apify_cost_usd: run.usageTotalUsd ?? null } };
+      pages.push({ url: `https://console.apify.com/actors/runs/${run.id}`, status: "ok", rows: ds.rows.length, ms: Date.now() - t0, depth: 0 });
+      log("info", `The actor returned ${ds.rows.length} item(s)${run.usageTotalUsd ? ` for $${run.usageTotalUsd.toFixed(3)}` : ""}.`);
+    } catch (e) {
+      if (isCancelError(e, hooks.signal)) cancelled = true;
+      else {
+        const msg = errorMessage(e);
+        firstError = msg;
+        firstErr = { code: "service", status: (e as IntegrationError).status ?? null, message: msg, url: input.url };
+        pages.push({ url: input.url, status: "error", rows: 0, ms: Date.now() - t0, depth: 0, error: msg });
+        log("error", `Apify: ${msg}`);
+      }
+    }
+  }
+
+  if (resume) log("info", `Resuming: ${fetched} page(s) done, ${queue.length} left, ${mainRows()} row(s) so far.`);
+  else if (o.source.type !== "apify") log("info", `Starting with ${starts.length} URL(s), up to ${o.limits.maxPages} page(s).`);
   while (queue.length && fetched < o.limits.maxPages && mainRows() < o.limits.maxRows) {
     if (hooks.signal?.aborted) { cancelled = true; break; }
+    mark = null;
+    if (hooks.shouldPause?.()) pauseHere();
+    if (hooks.checkpoint && fetched > 0 && fetched % CHECKPOINT_EVERY_PAGES === 0) hooks.checkpoint(snapshot());
+    if (hooks.shouldPause) mark = snapshot();
     const item = queue.shift()!;
     const key = normalizeForVisit(item.url);
     if (visited.has(key)) continue;
@@ -265,6 +336,7 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
       if (mainSet && o.detail.enabled && o.detail.fields.length) {
         for (const row of mainSet.rows) {
           if (hooks.signal?.aborted || fetched >= o.limits.maxPages) break;
+          if (hooks.shouldPause?.()) pauseHere();
           const link = typeof row[o.detail.linkField] === "string" ? absolutize(row[o.detail.linkField] as string, page.finalUrl) : null;
           if (!link || visited.has(normalizeForVisit(link))) continue;
           visited.add(normalizeForVisit(link));

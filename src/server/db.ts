@@ -10,7 +10,7 @@ import { log } from "./log";
  * statements in src/server/repo, so swapping to Postgres later means
  * rewriting that folder only.
  */
-const MIGRATIONS: { id: number; name: string; sql: string }[] = [
+const MIGRATIONS: { id: number; name: string; sql: string; foreignKeysOff?: boolean }[] = [
   {
     id: 1,
     name: "initial",
@@ -626,22 +626,126 @@ ALTER TABLE agent_runs ADD COLUMN trigger TEXT;
 CREATE INDEX idx_agent_bot ON agent_runs(bot_id, created_at DESC);
 `,
   },
+  {
+    id: 10,
+    name: "downloads, pause and resume, bot evaluations",
+    // Rebuilds jobs (a new 'paused' status) without touching job_logs, so foreign keys are off for this one.
+    foreignKeysOff: true,
+    sql: `
+CREATE TABLE jobs_new (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  ref_id TEXT,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued','running','paused','succeeded','failed','cancelled')),
+  trigger TEXT NOT NULL DEFAULT 'manual',
+  input TEXT NOT NULL DEFAULT '{}',
+  progress TEXT NOT NULL DEFAULT '{}',
+  result TEXT,
+  error TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 1,
+  priority INTEGER NOT NULL DEFAULT 0,
+  run_after TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  -- Where a paused or interrupted task run stopped (its queue, the pages done and the rows so far).
+  checkpoint TEXT
+);
+INSERT INTO jobs_new (id, kind, ref_id, title, status, trigger, input, progress, result, error, attempts, max_attempts, priority, run_after, created_at, started_at, finished_at)
+  SELECT id, kind, ref_id, title, status, trigger, input, progress, result, error, attempts, max_attempts, priority, run_after, created_at, started_at, finished_at FROM jobs;
+DROP TABLE jobs;
+ALTER TABLE jobs_new RENAME TO jobs;
+CREATE INDEX idx_jobs_queue ON jobs(status, priority DESC, run_after);
+CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
+CREATE INDEX idx_jobs_ref ON jobs(ref_id, created_at DESC);
+
+-- Bot memory gains lessons: what the bot's self-evaluations learned.
+CREATE TABLE bot_memory_new (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'fact' CHECK (kind IN ('fact','run','lesson')),
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (bot_id, kind, key)
+);
+INSERT INTO bot_memory_new SELECT id, bot_id, kind, key, value, created_at, updated_at FROM bot_memory;
+DROP TABLE bot_memory;
+ALTER TABLE bot_memory_new RENAME TO bot_memory;
+CREATE INDEX idx_bot_memory ON bot_memory(bot_id, kind, updated_at DESC);
+
+-- A bot's grade of each of its runs, and your thumbs up or down with a note.
+CREATE TABLE bot_evals (
+  run_id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  score INTEGER,
+  met_job INTEGER,
+  summary TEXT,
+  lessons TEXT NOT NULL DEFAULT '[]',
+  suggestion TEXT,
+  user_rating INTEGER NOT NULL DEFAULT 0,
+  user_note TEXT NOT NULL DEFAULT '',
+  cost REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_bot_evals ON bot_evals(bot_id, created_at DESC);
+
+-- The download manager: one row per file, with progress so a paused or interrupted download resumes.
+CREATE TABLE downloads (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  folder TEXT NOT NULL DEFAULT '',
+  file_name TEXT NOT NULL,
+  path TEXT,
+  status TEXT NOT NULL CHECK (status IN ('queued','running','paused','done','failed','cancelled')),
+  bytes INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER,
+  content_type TEXT,
+  resumable INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'manual',
+  ref_id TEXT,
+  error TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  sha256 TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX idx_downloads_status ON downloads(status, created_at);
+CREATE INDEX idx_downloads_created ON downloads(created_at DESC);
+`,
+  },
 ];
 
-function migrate(db: Database.Database) {
+function migrate(db: Database.Database, upTo = Infinity) {
   db.exec(`CREATE TABLE IF NOT EXISTS _migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`);
   const applied = new Set(db.prepare("SELECT id FROM _migrations").all().map((r) => (r as { id: number }).id));
   for (const m of MIGRATIONS) {
-    if (applied.has(m.id)) continue;
-    db.transaction(() => {
-      db.exec(m.sql);
-      db.prepare("INSERT INTO _migrations (id, name, applied_at) VALUES (?, ?, ?)").run(m.id, m.name, new Date().toISOString());
-    })();
+    if (applied.has(m.id) || m.id > upTo) continue;
+    // A table rebuild must not cascade deletes into the tables that point at it; the pragma only works outside a transaction.
+    if (m.foreignKeysOff) db.pragma("foreign_keys = OFF");
+    try {
+      db.transaction(() => {
+        db.exec(m.sql);
+        if (m.foreignKeysOff) {
+          const broken = db.pragma("foreign_key_check") as unknown[];
+          if (broken.length) throw new Error(`Migration ${m.id} left ${broken.length} broken reference(s).`);
+        }
+        db.prepare("INSERT INTO _migrations (id, name, applied_at) VALUES (?, ?, ?)").run(m.id, m.name, new Date().toISOString());
+      })();
+    } finally {
+      if (m.foreignKeysOff) db.pragma("foreign_keys = ON");
+    }
     log.info("db.migrated", { id: m.id, name: m.name });
   }
 }
 
-export function openDatabase(file: string) {
+/** `upTo` stops at an older schema version, for migration tests. */
+export function openDatabase(file: string, upTo?: number) {
   if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new Database(file);
   db.pragma("journal_mode = WAL");
@@ -649,7 +753,7 @@ export function openDatabase(file: string) {
   db.pragma("busy_timeout = 5000");
   // Deleted rows are overwritten, so "wipe history" and private runs leave nothing readable in the file.
   db.pragma("secure_delete = ON");
-  migrate(db);
+  migrate(db, upTo);
   return db;
 }
 

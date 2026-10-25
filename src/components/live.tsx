@@ -14,9 +14,10 @@ export type LiveEvent =
   | { type: "job"; id: string; status: string; kind: string; title: string; progress?: Record<string, unknown> }
   | { type: "deal_search"; id: string }
   | { type: "task_run"; id: string; recipeId: string; status: string }
-  | { type: "bot"; id: string; status: string };
+  | { type: "bot"; id: string; status: string }
+  | { type: "download"; id: string; status: string; bytes: number; total: number | null; name: string };
 
-type Counts = { queued: number; running: number; succeeded: number; failed: number; cancelled: number };
+type Counts = { queued: number; running: number; paused: number; succeeded: number; failed: number; cancelled: number };
 type LiveState = {
   connected: boolean;
   unread: number;

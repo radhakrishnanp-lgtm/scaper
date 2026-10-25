@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Activity, Ban, Eraser, EyeOff, RotateCcw } from "lucide-react";
+import { Activity, Ban, Eraser, EyeOff, Pause, Play, RotateCcw } from "lucide-react";
 import type { Job } from "@/server/repo/jobs";
 import { ConfirmDialog } from "@/components/dialog";
 import { JOB_KIND_LABEL, jobResultHref, JobStatusBadge } from "@/components/status";
@@ -14,9 +14,11 @@ import { duration, plural, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
 
-type Counts = { queued: number; running: number; succeeded: number; failed: number; cancelled: number };
+type Counts = { queued: number; running: number; paused: number; succeeded: number; failed: number; cancelled: number };
 type JobsPage = { items: Job[]; nextCursor: string | null; counts: Counts };
-type StatusFilter = "all" | "active" | "failed" | "succeeded" | "cancelled";
+type StatusFilter = "all" | "active" | "paused" | "failed" | "succeeded" | "cancelled";
+/** Kinds that can stop after the current page and carry on later. */
+const PAUSABLE = new Set(["task", "scrape"]);
 
 function RunsPage() {
   const router = useRouter();
@@ -66,12 +68,22 @@ function RunsPage() {
       setCursor(page.nextCursor);
     } catch (e) { toast.error("Could not load more", errorText(e)); } finally { setLoadingMore(false); }
   };
-  const act = async (j: Job, action: "cancel" | "retry") => {
+  const act = async (j: Job, action: "cancel" | "retry" | "pause" | "resume") => {
     setBusy(j.id + action);
     try {
-      const res = await api<{ job: Job }>(`/api/jobs/${j.id}/${action}`, { method: "POST" });
+      const res = await api<{ job: Job; message?: string }>(`/api/jobs/${j.id}/${action}`, { method: "POST" });
       if (action === "retry") toast.success("Started again", j.title, { label: "Follow", onClick: () => router.push(`/runs/${res.job.id}`) });
+      else if (action === "pause") toast.success(res.message ?? "Pausing", j.title);
+      else if (action === "resume") toast.success(res.message ?? "Resumed", j.title);
       else toast.success("Cancelled", j.title);
+      void reload();
+    } catch (e) { toast.error(`Could not ${action}`, errorText(e)); } finally { setBusy(null); }
+  };
+  const all = async (action: "pause" | "resume") => {
+    setBusy(action + "all");
+    try {
+      const r = await api<{ jobs: number; downloads: number }>("/api/jobs/pause-all", { body: { action } });
+      toast.success(action === "pause" ? "Paused" : "Resumed", `${plural(r.jobs, "run")} and ${plural(r.downloads, "download")}.${action === "pause" && r.jobs ? " Running tasks stop after their current page." : ""}`);
       void reload();
     } catch (e) { toast.error(`Could not ${action}`, errorText(e)); } finally { setBusy(null); }
   };
@@ -90,13 +102,18 @@ function RunsPage() {
       <PageHeader
         title="Runs"
         description="Every job Scaper runs: tasks, quick scrapes, watcher checks, price checks, deal searches and backups."
-        actions={<Button variant="secondary" icon={<Eraser className="size-4" />} onClick={() => setClearOpen(true)}>Clear finished</Button>}
+        actions={<>
+          {c && c.paused > 0 && <Button variant="secondary" icon={<Play className="size-4" />} loading={busy === "resumeall"} onClick={() => void all("resume")}>Resume all</Button>}
+          {c && c.queued + c.running > 0 && <Button variant="secondary" icon={<Pause className="size-4" />} loading={busy === "pauseall"} onClick={() => void all("pause")}>Pause all</Button>}
+          <Button variant="secondary" icon={<Eraser className="size-4" />} onClick={() => setClearOpen(true)}>Clear finished</Button>
+        </>}
       />
       <Card>
         <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
           <FilterChips label="Status" value={status} onChange={setStatus} options={[
-            { value: "all", label: "All", count: c ? c.queued + c.running + c.succeeded + c.failed + c.cancelled : undefined },
+            { value: "all", label: "All", count: c ? c.queued + c.running + c.paused + c.succeeded + c.failed + c.cancelled : undefined },
             { value: "active", label: "Active", count: c ? c.queued + c.running : undefined },
+            { value: "paused", label: "Paused", count: c?.paused },
             { value: "failed", label: "Failed", count: c?.failed },
             { value: "succeeded", label: "Done", count: c?.succeeded },
             { value: "cancelled", label: "Cancelled", count: c?.cancelled },
@@ -128,7 +145,9 @@ function RunsPage() {
                     <Link prefetch={false} href={`/runs/${j.id}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:text-accent">{j.private && <Badge className="mr-1.5"><EyeOff className="size-3" />private</Badge>}{j.title}</Link>
                     <span className="text-xs text-muted">{j.trigger} · {timeAgo(j.created_at)}{j.duration_ms !== null && !active ? ` · ${duration(j.duration_ms)}` : ""}{j.attempts > 1 ? ` · attempt ${j.attempts}/${j.max_attempts}` : ""}</span>
                     <div className="flex gap-1">
-                      {active && <IconButton size="sm" label="Cancel" disabled={busy === j.id + "cancel"} onClick={() => void act(j, "cancel")}><Ban className="size-4" /></IconButton>}
+                      {(j.status === "queued" || (j.status === "running" && PAUSABLE.has(j.kind))) && !j.private && <IconButton size="sm" label="Pause" disabled={busy === j.id + "pause"} onClick={() => void act(j, "pause")}><Pause className="size-4" /></IconButton>}
+                      {j.status === "paused" && <IconButton size="sm" label="Resume" disabled={busy === j.id + "resume"} onClick={() => void act(j, "resume")}><Play className="size-4" /></IconButton>}
+                      {(active || j.status === "paused") && <IconButton size="sm" label="Cancel" disabled={busy === j.id + "cancel"} onClick={() => void act(j, "cancel")}><Ban className="size-4" /></IconButton>}
                       {(j.status === "failed" || j.status === "cancelled") && <IconButton size="sm" label="Run again" disabled={busy === j.id + "retry"} onClick={() => void act(j, "retry")}><RotateCcw className="size-4" /></IconButton>}
                       {href && !active && <Link prefetch={false} href={href}><Button size="sm" variant="ghost">Result</Button></Link>}
                     </div>
@@ -140,7 +159,8 @@ function RunsPage() {
                     </div>
                   )}
                   {waiting && <p className="mt-1 text-xs text-muted">Waiting until {new Date(j.run_after).toLocaleTimeString("en-IN")} (retry pause or polite delay)</p>}
-                  {j.error && <p className="mt-1 truncate text-xs text-danger" title={j.error}>{j.error}</p>}
+                  {j.status === "paused" && <p className="mt-1 text-xs text-muted">{j.error ?? "Paused."}{j.progress.done ? ` ${plural(j.progress.done, "page")} done${j.progress.rows !== undefined ? `, ${plural(j.progress.rows, "row")} so far` : ""}.` : ""}</p>}
+                  {j.error && j.status !== "paused" && <p className="mt-1 truncate text-xs text-danger" title={j.error}>{j.error}</p>}
                 </li>
               );
             })}

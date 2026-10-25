@@ -42,7 +42,7 @@ import { suggestSelectors } from "./suggest";
 
 export type ToolContext = { browser: AgentBrowser; signal: AbortSignal; model: ModelChoice; runId?: string; botId?: string };
 export type AgentTool = {
-  group: "Read the web" | "Browser" | "Tasks & data" | "Watchers" | "Prices & deals" | "Scaper" | "Knowledge" | "Bots";
+  group: "Read the web" | "Browser" | "Tasks & data" | "Watchers" | "Prices & deals" | "Scaper" | "Knowledge" | "Bots" | "Firecrawl & Apify" | "Downloads & runs";
   changes: boolean;
   def: ToolDef;
   /** One line for the approval card: what exactly will happen. */
@@ -246,6 +246,159 @@ function BOT_TOOLS(): Record<string, AgentTool> {
   };
 }
 
+const apifyCap = () => getSettings().integrations.apifyMaxChargeUsd;
+const rowsPreview = (rows: Record<string, unknown>[], n = 25) => rows.slice(0, n).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 300) : v])));
+
+/** Firecrawl and Apify with the user's own keys, the download manager, and pausing task runs. */
+function SERVICE_TOOLS(): Record<string, AgentTool> {
+  return {
+    firecrawl_scrape: {
+      group: "Firecrawl & Apify", changes: false,
+      def: def("firecrawl_scrape", "Load a page through the user's Firecrawl account and read it as Markdown with numbered links. Use when read_page fails on a page that needs a real browser, or the user asks for Firecrawl. Costs one Firecrawl credit.", {
+        url: str("Absolute http(s) URL"), focus: { type: "string", enum: ["main", "full"], description: "main (default) or full" },
+      }, ["url"]),
+      run: async (a, ctx) => {
+        const page = await fetchPage(urlArg(a), "firecrawl", { signal: ctx.signal });
+        const c = buildPageContext(page.html, page.finalUrl, { scope: a.focus === "full" ? "full" : "main", budgetTokens: 5500 });
+        return clip(`URL: ${page.finalUrl}\nTitle: ${c.title}\n<page>\n${c.markdown || (page.text ?? "").slice(0, 20_000)}\n\nLinks:\n${linkLines(c.links, page.finalUrl, 80)}\n</page>`, 24_000);
+      },
+    },
+    web_search: {
+      group: "Firecrawl & Apify", changes: false,
+      def: def("web_search", "Search the web with the user's Firecrawl account. Returns titles, links and snippets; read=true also returns the top pages as Markdown. Use to find pages to scrape, not as a source of truth on its own.", {
+        query: str("What to search for. site:example.com limits it to one site."), limit: num("Results, 1-10 (default 5)"), read: bool("Also read the result pages (more credits)"),
+        country: str("Two-letter country code, e.g. IN"),
+      }, ["query"]),
+      run: async (a, ctx) => {
+        const { firecrawlSearch } = await import("../integrations/firecrawl");
+        const hits = await firecrawlSearch(String(a.query ?? ""), { limit: Math.min(Number(a.limit) || 5, 10), read: Boolean(a.read), country: a.country ? String(a.country).slice(0, 2).toUpperCase() : undefined, signal: ctx.signal });
+        return clip(`<results>\n${hits.map((h, i) => `${i + 1}. ${h.title}\n${h.url}\n${h.description}${h.markdown ? `\n${h.markdown.slice(0, 3000)}` : ""}`).join("\n\n")}\n</results>`, 24_000);
+      },
+    },
+    firecrawl_map: {
+      group: "Firecrawl & Apify", changes: false,
+      def: def("firecrawl_map", "List a website's pages through Firecrawl (from its sitemap and links), optionally ranked by a word such as 'laptops'. Use to find category or product pages on a large site.", {
+        url: str("The site, e.g. https://www.example.com"), search: str("Optional word to rank links by"), limit: num("Links, up to 500 (default 100)"),
+      }, ["url"]),
+      run: async (a, ctx) => {
+        const url = urlArg(a);
+        const { preflight } = await import("../fetcher");
+        await preflight(url, { signal: ctx.signal });
+        const { firecrawlMap } = await import("../integrations/firecrawl");
+        const links = await firecrawlMap(url, { search: a.search ? String(a.search).slice(0, 100) : undefined, limit: Math.min(Number(a.limit) || 100, 500), signal: ctx.signal });
+        return j({ count: links.length, links: links.slice(0, 200) });
+      },
+    },
+    apify_find_actor: {
+      group: "Firecrawl & Apify", changes: false,
+      def: def("apify_find_actor", "Search the Apify Store for a ready-made scraper (an actor), e.g. 'youtube', 'instagram hashtag', 'tiktok trending', 'google maps'. Returns actor ids, what they do, users and pricing model.", { query: str("What to scrape") }, ["query"]),
+      run: async (a) => {
+        const { apifyStore } = await import("../integrations/apify");
+        return j(await apifyStore(String(a.query ?? ""), 8));
+      },
+    },
+    apify_actor_input: {
+      group: "Firecrawl & Apify", changes: false,
+      def: def("apify_actor_input", "Get an Apify actor's description and example input, so you know which input fields it takes before running it.", { actor: str("Actor id, e.g. streamers~youtube-scraper") }, ["actor"]),
+      run: async (a) => {
+        const { apifyActor } = await import("../integrations/apify");
+        const { apifyActorIdSchema } = await import("@/lib/schemas");
+        return j(await apifyActor(apifyActorIdSchema.parse(a.actor)));
+      },
+    },
+    apify_run_actor: {
+      group: "Firecrawl & Apify", changes: true,
+      describe: (a) => `Run the Apify actor ${short(a.actor, 60)} on your account (up to ${Math.min(Number(a.max_items) || 50, 500)} items, at most $${Math.min(Number(a.max_charge_usd) || apifyCap(), apifyCap())})`,
+      def: def("apify_run_actor", "Run an Apify actor once on the user's account and read its results (it costs the user money, so keep max_items small). Check its input with apify_actor_input first. For a repeating job use create_apify_task instead.", {
+        actor: str("Actor id, e.g. apify~instagram-hashtag-scraper"), input: { type: "object", description: "The actor's JSON input" },
+        max_items: num("Most items to return (default 50, at most 500)"), max_charge_usd: num("Cost cap in US dollars for pay-per-result actors"),
+      }, ["actor", "input"]),
+      run: async (a, ctx) => {
+        const { runActor, itemsToDataset } = await import("../integrations/apify");
+        const { apifyActorIdSchema } = await import("@/lib/schemas");
+        const input = a.input && typeof a.input === "object" && !Array.isArray(a.input) ? a.input as Record<string, unknown> : {};
+        const { run, items } = await runActor(apifyActorIdSchema.parse(a.actor), input, {
+          maxItems: Math.min(Math.max(Number(a.max_items) || 50, 1), 500), timeoutSeconds: 600, maxChargeUsd: Math.min(Number(a.max_charge_usd) || apifyCap(), apifyCap()), signal: ctx.signal,
+        });
+        const ds = itemsToDataset(items);
+        return clip(`Apify run ${run.id} (${run.usageTotalUsd ? `$${run.usageTotalUsd.toFixed(3)}` : "cost not reported"}): ${ds.rows.length} items. Columns: ${ds.columns.join(", ")}\n<results>\n${JSON.stringify(rowsPreview(ds.rows))}\n</results>`, 20_000);
+      },
+    },
+    create_apify_task: {
+      group: "Firecrawl & Apify", changes: true,
+      describe: (a) => `Save a task "${short(a.name)}" that runs the Apify actor ${short(a.actor, 60)}${a.schedule_minutes ? ` every ${a.schedule_minutes} min` : a.cron ? ` on "${a.cron}"` : ""}`,
+      def: def("create_apify_task", "Save a task whose rows come from an Apify actor (for social media trends, YouTube, Instagram, TikTok and the like). It gets history, change alerts, exports and downloads like any task.", {
+        name: str("Short name"), actor: str("Actor id"), input: { type: "object", description: "The actor's JSON input" },
+        max_items: num("Items per run (default 100)"), schedule_minutes: num("Run every N minutes (15 or more)"), cron: str("Or a cron schedule"),
+        key_fields: { type: "array", items: { type: "string" }, description: "Columns that identify an item (e.g. url), to alert on new ones" },
+        download_columns: { type: "array", items: { type: "string" }, description: "Columns with file links to download after each run (e.g. videoUrl, displayUrl)" },
+      }, ["name", "actor", "input"]),
+      run: async (a) => {
+        const { apifyActorIdSchema } = await import("@/lib/schemas");
+        validateCron(a.cron ? String(a.cron) : null);
+        const actorId = apifyActorIdSchema.parse(a.actor);
+        const keys = Array.isArray(a.key_fields) ? (a.key_fields as unknown[]).map(String).slice(0, 5) : [];
+        const options = {
+          ...defaultTaskOptions(),
+          source: { type: "apify" as const, actorId, input: (a.input as Record<string, unknown>) ?? {}, maxItems: Math.min(Number(a.max_items) || 100, 5000), timeoutSeconds: 900, maxChargeUsd: apifyCap() },
+          monitor: { ...defaultTaskOptions().monitor, enabled: keys.length > 0, keyFields: keys },
+          dedupeBy: keys,
+          downloads: { columns: Array.isArray(a.download_columns) ? (a.download_columns as unknown[]).map(String).slice(0, 5) : [], folder: "", maxFiles: 100 },
+        };
+        const task = createRecipe(taskSchema.parse({
+          name: a.name, url: `https://apify.com/${actorId.replace("~", "/")}`, mode: "fast", extract: { type: "auto" }, options, tags: ["agent", "apify"],
+          scheduleMinutes: a.schedule_minutes ? Math.max(15, Math.round(Number(a.schedule_minutes))) : null, cron: a.cron ?? null, description: "Created by the AI agent",
+        }));
+        audit("task.created", { taskId: task.id, by: "agent", source: "apify" });
+        return j({ created: true, id: task.id, name: task.name, schedule: schedule(task), open: `/tasks/${task.id}` });
+      },
+    },
+    download_files: {
+      group: "Downloads & runs", changes: true,
+      describe: (a) => `Download ${Array.isArray(a.urls) ? a.urls.length : 0} file(s)${a.folder ? ` into "${short(a.folder, 40)}"` : ""}`,
+      def: def("download_files", "Add file links (images, videos, PDFs, CSVs) to the download manager. They download in the background with pause and resume. Only links the user asked for or that are clearly theirs to save.", {
+        urls: { type: "array", items: { type: "string" }, description: "Direct file links" }, folder: str("Folder name inside Downloads"),
+      }, ["urls"]),
+      run: async (a, ctx) => {
+        const { queueDownloads } = await import("../downloads/manager");
+        const urls = Array.isArray(a.urls) ? (a.urls as unknown[]).map(String).slice(0, 500) : [];
+        const r = queueDownloads(urls, { folder: a.folder ? String(a.folder) : "", source: ctx.botId ? "bot" : "agent", refId: ctx.botId ?? ctx.runId ?? null });
+        return j({ added: r.added.length, already_there: r.skipped, invalid: r.invalid, open: "/downloads" });
+      },
+    },
+    list_downloads: {
+      group: "Downloads & runs", changes: false,
+      def: def("list_downloads", "List the download manager's files: status, size, progress and errors.", { status: { type: "string", enum: ["active", "done", "failed", "paused"], description: "Optional filter" } }),
+      run: async (a) => {
+        const { listDownloads, downloadCounts } = await import("../repo/downloads");
+        return j({ counts: downloadCounts(), items: listDownloads({ status: a.status ? String(a.status) : undefined, limit: 40 }).map((d) => ({ id: d.id, file: d.file_name, folder: d.folder, status: d.status, bytes: d.bytes, total: d.total_bytes, error: d.error, url: d.url })) });
+      },
+    },
+    pause_run: {
+      group: "Downloads & runs", changes: true,
+      describe: (a) => `Pause the run ${short(a.job_id, 40)}`,
+      def: def("pause_run", "Pause a queued or running task run (it stops after the current page and keeps its rows). Resume it later with resume_run.", { job_id: str("The run's job id (from list_runs or the Runs page)") }, ["job_id"]),
+      run: async (a) => {
+        const { pauseJob } = await import("../jobs");
+        const r = pauseJob(String(a.job_id ?? ""));
+        if (!r.ok) throw new Error(r.message);
+        return j(r);
+      },
+    },
+    resume_run: {
+      group: "Downloads & runs", changes: true,
+      describe: (a) => `Resume the run ${short(a.job_id, 40)}`,
+      def: def("resume_run", "Resume a paused task run; it carries on from where it stopped.", { job_id: str("The run's job id") }, ["job_id"]),
+      run: async (a) => {
+        const { resumeJob } = await import("../jobs");
+        const r = resumeJob(String(a.job_id ?? ""));
+        if (!r.ok) throw new Error(r.message);
+        return j(r);
+      },
+    },
+  };
+}
+
 export const TOOLS: Record<string, AgentTool> = {
   // Read the web
   read_page: {
@@ -434,7 +587,7 @@ export const TOOLS: Record<string, AgentTool> = {
     group: "Tasks & data", changes: true,
     describe: (a) => `Save a task "${short(a.name)}" for ${short(a.url, 80)}${a.schedule_minutes ? `, running every ${a.schedule_minutes} min` : a.cron ? ` on "${a.cron}"` : ""}${Array.isArray(a.categories) && a.categories.length ? ` across ${a.categories.length} categories` : ""}.`,
     def: def("create_task", "Save a scraping task the user can run again or on a schedule. Only when the user asks to save, schedule or keep scraping something.", {
-      name: str("Short name"), url: str("Start URL"), mode: { type: "string", enum: ["browser", "fast"] }, extract: extractArg,
+      name: str("Short name"), url: str("Start URL"), mode: { type: "string", enum: ["browser", "fast", "firecrawl"], description: "firecrawl = load pages through the user's Firecrawl account" }, extract: extractArg,
       categories: { type: "array", description: "Category pages to read instead of the start URL (from plan_category_scrape)", items: { type: "object", properties: { name: str("Category"), url: str("URL") }, required: ["name", "url"] } },
       pagination: { type: "object", description: '{"type":"next","selector":"a.next","maxPages":5} or {"type":"none"}' },
       schedule_minutes: num("Run every N minutes (15 or more). Leave out for manual."), cron: str("Or a cron schedule like '0 9 * * *'"),
@@ -830,6 +983,7 @@ export const TOOLS: Record<string, AgentTool> = {
       return j({ deleted: String(a.name) });
     },
   },
+  ...SERVICE_TOOLS(),
   ...BOT_TOOLS(),
 };
 
@@ -837,6 +991,16 @@ export const TOOLS: Record<string, AgentTool> = {
 export const BOT_ONLY_TOOLS = new Set(["bot_memory_read", "bot_memory_write", "bot_memory_forget", "notify_owner", "bot_finish"]);
 /** Bots cannot create, change, start or delete bots, so one bot can never set off another in a loop. */
 export const NOT_FOR_BOTS = new Set(["create_bot", "update_bot", "run_bot", "delete_bot"]);
+
+const FIRECRAWL_TOOLS = new Set(["firecrawl_scrape", "web_search", "firecrawl_map"]);
+const APIFY_TOOLS = new Set(["apify_find_actor", "apify_actor_input", "apify_run_actor", "create_apify_task"]);
+/** Firecrawl and Apify tools are only offered once their key is saved in Integrations. */
+export function serviceToolAvailable(name: string) {
+  const i = getSettings().integrations;
+  if (FIRECRAWL_TOOLS.has(name)) return Boolean(i.firecrawlKey);
+  if (APIFY_TOOLS.has(name)) return Boolean(i.apifyToken);
+  return true;
+}
 
 export const TOOL_DEFS: ToolDef[] = Object.entries(TOOLS).filter(([n]) => !BOT_ONLY_TOOLS.has(n)).map(([, t]) => t.def);
 

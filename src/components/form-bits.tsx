@@ -1,5 +1,6 @@
 "use client";
 
+import type { FetchMode } from "@/lib/schemas";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Bell, Globe, Hash, Mail, MessageCircle, MessageSquareText, Send, Smartphone, Webhook } from "lucide-react";
@@ -169,7 +170,7 @@ export function SiteIcon({ url }: { url: string }) {
 }
 
 /** How to reach the next pages of a list: a Next link, a Next button, Load more, or infinite scroll. */
-export function PaginationField({ value, onChange, mode }: { value: Pagination; onChange: (v: Pagination) => void; mode: "browser" | "fast" }) {
+export function PaginationField({ value, onChange, mode }: { value: Pagination; onChange: (v: Pagination) => void; mode: FetchMode }) {
   const browserOnly = value.type === "click" || value.type === "loadMore" || value.type === "scroll";
   return (
     <div className="space-y-2">

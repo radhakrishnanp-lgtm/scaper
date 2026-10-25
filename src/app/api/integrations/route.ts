@@ -20,6 +20,8 @@ export const GET = handler(async () => {
       default: Boolean(s.notifications.webhookUrl), endpoints: s.integrations.webhooks.length, retries: s.integrations.webhookRetries,
       week: { total: count("webhook"), ok: count("webhook", "ok"), failed: count("webhook", "failed"), retrying: count("webhook", "retrying") },
     },
+    firecrawl: { configured: Boolean(s.integrations.firecrawlKey), url: s.integrations.firecrawlUrl, tasks: listRecipes().filter((t) => t.mode === "firecrawl").length },
+    apify: { configured: Boolean(s.integrations.apifyToken), maxChargeUsd: s.integrations.apifyMaxChargeUsd, tasks: listRecipes().filter((t) => t.options.source.type === "apify").map((t) => ({ id: t.id, name: t.name, actorId: t.options.source.type === "apify" ? t.options.source.actorId : "" })) },
     sheets: {
       configured: Boolean(s.integrations.googleServiceAccount), email: serviceAccountEmail(s.integrations.googleServiceAccount),
       tasks: listRecipes().filter((t) => t.options.output.sheets.enabled).map((t) => ({ id: t.id, name: t.name, sheet: t.options.output.sheets.sheet, mode: t.options.output.sheets.mode })),
