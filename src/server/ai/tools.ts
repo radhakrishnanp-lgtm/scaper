@@ -366,6 +366,36 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
         return j({ added: r.added.length, already_there: r.skipped, invalid: r.invalid, open: "/downloads" });
       },
     },
+    find_files: {
+      group: "Downloads & runs", changes: false,
+      def: def("find_files", "Find the files a site offers (PDF, EPUB and other ebooks, images, video, audio, documents, archives, or any file ending), including lists where each item links to its own page with the real download link. Walks the start pages, their next pages and item pages up to `depth` hops, with robots.txt and the site's delays. Returns the file links (use download_files to save them). picker: rules (Scaper's own), ai (the fast model reads each page's links with the instruction) or firecrawl (Firecrawl's AI, needs its key).", {
+        urls: { type: "array", items: { type: "string" }, description: "Start pages (the list of files)" },
+        kinds: { type: "array", items: { type: "string", enum: ["pdf", "ebook", "image", "video", "audio", "document", "archive"] }, description: "Kinds of file. Default pdf and ebook" },
+        extensions: { type: "array", items: { type: "string" }, description: "Other file endings, like srt or psd" },
+        instruction: str("What to look for, in the user's words, for the ai or firecrawl picker"),
+        picker: { type: "string", enum: ["rules", "ai", "firecrawl"] },
+        depth: { type: "number", description: "Hops from the list to the file: 1 when each item has its own page with the download link (default), 2 when there is one more page" },
+        max_pages: { type: "number", description: "Pages to open, default 40" },
+        mode: { type: "string", enum: ["fast", "browser", "firecrawl"], description: "How to load pages; browser for sites that need JavaScript" },
+      }, ["urls"]),
+      run: async (a) => {
+        const { fileFinderSchema } = await import("@/lib/schemas");
+        const arr = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).map(String) : undefined);
+        const input = fileFinderSchema.parse({
+          urls: arr(a.urls)?.slice(0, 20), kinds: arr(a.kinds), extensions: arr(a.extensions), instruction: a.instruction ? String(a.instruction) : undefined,
+          picker: a.picker ?? undefined, depth: a.depth != null ? Number(a.depth) : undefined, maxPages: a.max_pages != null ? Math.min(Number(a.max_pages), 200) : undefined,
+          mode: a.mode ?? undefined, download: false,
+        });
+        const job = await enqueueAndWait({ kind: "files", title: `Find files on ${new URL(input.urls[0]!).hostname}`, trigger: "agent", input: input as unknown as Record<string, unknown> }, 300_000);
+        const r = (job.result ?? {}) as { files?: { url: string; name: string; kind: string; from: string; size: number | null }[]; pages?: { url: string; error?: string }[] };
+        if (job.status !== "succeeded" && !r.files?.length) throw new Error(job.error ?? "The file search did not finish.");
+        return j({
+          found: r.files?.length ?? 0, pages_opened: r.pages?.length ?? 0,
+          files: (r.files ?? []).slice(0, 150).map((f) => ({ url: f.url, name: f.name, kind: f.kind, from: f.from, size: f.size })),
+          page_errors: (r.pages ?? []).filter((p) => p.error).slice(0, 10), open: `/downloads?find=${job.id}`,
+        });
+      },
+    },
     list_downloads: {
       group: "Downloads & runs", changes: false,
       def: def("list_downloads", "List the download manager's files: status, size, progress and errors.", { status: { type: "string", enum: ["active", "done", "failed", "paused"], description: "Optional filter" } }),

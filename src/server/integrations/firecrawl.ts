@@ -74,7 +74,7 @@ function toPage(url: string, d: z.infer<typeof pageSchema>): FirecrawlPage {
 }
 
 /** One page through Firecrawl: its HTML (for your selectors) and Markdown (for your AI). */
-export async function firecrawlScrape(url: string, opts: { signal?: AbortSignal; waitFor?: number; onlyMainContent?: boolean; formats?: string[]; mobile?: boolean } = {}): Promise<FirecrawlPage> {
+export async function firecrawlScrape(url: string, opts: { signal?: AbortSignal; waitFor?: number; onlyMainContent?: boolean; formats?: (string | Record<string, unknown>)[]; mobile?: boolean } = {}): Promise<FirecrawlPage> {
   const started = Date.now();
   const r = await call<{ success?: boolean; data?: unknown }>("POST", "/scrape", {
     url, formats: opts.formats ?? ["rawHtml", "markdown", "links"], onlyMainContent: opts.onlyMainContent ?? false,

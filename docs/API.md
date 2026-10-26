@@ -108,7 +108,7 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 
 | Method & path | Purpose |
 |---|---|
-| GET `/api/browser` · POST `/api/browser` | State, annotations, bookmarks, add-ons and browser settings · `{action: open\|close, mode?: normal\|incognito}` (private mode always opens incognito) |
+| GET `/api/browser` · POST `/api/browser` | State (each tab has `status` and a `problem` with a plain reason when it did not load), annotations, bookmarks, add-ons and browser settings (engine, real window, Firefox installed) · `{action: open\|close, mode?: normal\|incognito}` (private mode always opens incognito) |
 | GET `/api/browser/stream` | Server-sent events: `frame` (JPEG, size, scroll offsets), `state` (tabs, mode), `dialog`, `notice`. Frames are dropped, not queued, for slow readers |
 | POST `/api/browser/input` | `{events: [...]}` up to 50 mouse (move, down, up, click, dblclick), wheel, key (with modifiers) and text events, in page pixels |
 | POST `/api/browser/action` | `navigate {url}` (a link, host or search words), `back`, `forward`, `reload`, `stop`, `newTab {url?}`, `closeTab`, `switchTab {tabId}`, `viewport {width, height}`, `dialog {accept, text?}` |
@@ -119,6 +119,14 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | GET/POST `/api/browser/extensions` · PATCH/DELETE `/api/browser/extensions/:id` | Add-ons; install with `{store: "<Web Store link or id>"}` or a raw .zip/.crx body (60 MB max) · `{enabled}` or remove |
 | POST `/api/browser/ask` | `{prompt, followUpOf?, model?: main\|fast}` starts an agent run with the open page and your notes attached; poll `/api/agent/runs/:id` |
 | DELETE `/api/browser/profile` | Closes the browser and deletes its saved profile (cookies, cache, sign-ins) |
+
+### File finder
+
+| Method & path | Purpose |
+|---|---|
+| GET `/api/files` | Recent file searches (jobs of kind `files`, result in `result`) and whether the AI and Firecrawl pickers are ready |
+| POST `/api/files` | Start a search `{urls[], kinds[]: pdf\|ebook\|image\|video\|audio\|document\|archive, extensions[], instruction, picker: rules\|ai\|firecrawl, mode: fast\|browser\|firecrawl, depth: 0-3, followNext, sameSite, maxPages, maxFiles, probe, download, folder}`; returns `{job}`. Poll `/api/jobs/:id`: `result.files[]` has `url, name, ext, kind, from, text, size, contentType` and `result.pages[]` each page read, with errors |
+| POST `/api/system/browser` | `{action: install, which: chromium\|firefox}` installs Playwright's Chromium or Firefox; `{action: test}` |
 
 ### Monitor
 

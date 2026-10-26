@@ -736,6 +736,10 @@ export const dataSettingsSchema = z.object({
   maxDownloadMb: z.number().int().min(1).max(50_000).default(2048),
   // Scaper's own visual browser: picture quality of the live view, start page, search, history.
   browserQuality: z.number().int().min(30).max(95).default(70),
+  /** Which engine runs the Browser page: Scaper's Chromium, the Chrome or Edge on this computer, or Firefox. */
+  browserEngine: z.enum(["chromium", "chrome", "msedge", "firefox"]).default("chromium"),
+  /** Also show the browser as a real window on this computer (you can use it there directly). */
+  browserWindow: z.boolean().default(false),
   browserHome: z.string().trim().max(500).default("https://duckduckgo.com/"),
   browserSearch: z.string().trim().max(500).refine((v) => v.includes("%s"), "Put %s where the search words go.").default("https://duckduckgo.com/?q=%s"),
   browserHistory: z.boolean().default(true),
@@ -834,6 +838,41 @@ export const downloadInputSchema = z.object({
   urls: z.array(z.string().trim().min(1).max(4096)).min(1, "Add at least one link").max(2000),
   folder: z.string().trim().max(80).default(""),
 });
+
+// The file finder: pages that list files, often with a second page that has the real download link.
+export const FILE_KINDS = {
+  pdf: ["pdf"],
+  ebook: ["epub", "mobi", "azw", "azw3", "fb2", "djvu", "cbz", "cbr"],
+  image: ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "tif", "tiff", "bmp"],
+  video: ["mp4", "webm", "mkv", "mov", "m4v", "avi"],
+  audio: ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"],
+  document: ["doc", "docx", "odt", "rtf", "txt", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp"],
+  archive: ["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz"],
+} as const;
+export type FileKind = keyof typeof FILE_KINDS;
+export const fileKindSchema = z.enum(Object.keys(FILE_KINDS) as [FileKind, ...FileKind[]]);
+
+export const fileFinderSchema = z.object({
+  urls: z.array(z.string().trim().url("Enter a full link, starting with http:// or https://").max(2048)).min(1, "Add at least one page").max(20),
+  kinds: z.array(fileKindSchema).max(7).default(["pdf", "ebook"]),
+  extensions: z.array(z.string().trim().toLowerCase().regex(/^[a-z0-9]{1,8}$/, "Use letters and digits, like srt")).max(20).default([]),
+  /** What to look for, in your words, for your AI or Firecrawl's. */
+  instruction: z.string().trim().max(2000).default(""),
+  /** Who picks the links: Scaper's rules, your AI, or Firecrawl's AI (needs a Firecrawl key). */
+  picker: z.enum(["rules", "ai", "firecrawl"]).default("rules"),
+  mode: fetchModeSchema.default("fast"),
+  /** Link hops from the start page to the file: 1 = the file is on a page the list links to. */
+  depth: z.number().int().min(0).max(3).default(1),
+  followNext: z.boolean().default(true),
+  sameSite: z.boolean().default(true),
+  maxPages: z.number().int().min(1).max(500).default(40),
+  maxFiles: z.number().int().min(1).max(2000).default(200),
+  /** Check links with no file ending (like /download?id=7) to see what they are. */
+  probe: z.boolean().default(true),
+  download: z.boolean().default(false),
+  folder: z.string().trim().max(80).default(""),
+});
+export type FileFinderInput = z.infer<typeof fileFinderSchema>;
 
 export const botRunInputSchema = z.object({
   prompt: z.string().trim().max(8000).optional(),

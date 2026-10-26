@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { chromium } from "playwright";
+import { chromium, firefox } from "playwright";
 import { env } from "../env";
 import { log } from "../log";
 import { getSettings } from "../repo/settings";
@@ -14,8 +14,8 @@ import { closeBrowser, executablePath } from "./browser";
  * or use a Chrome, Edge, Brave or Chromium that is already on this computer.
  */
 
-type InstallState = { state: "idle" | "running" | "done" | "error"; startedAt: string | null; finishedAt: string | null; log: string[]; error: string | null; percent: number | null };
-const g = globalThis as unknown as { __scaperBrowserInstall?: InstallState; __scaperInstallCommand?: () => { cmd: string; args: string[] } };
+type InstallState = { which?: "chromium" | "firefox"; state: "idle" | "running" | "done" | "error"; startedAt: string | null; finishedAt: string | null; log: string[]; error: string | null; percent: number | null };
+const g = globalThis as unknown as { __scaperBrowserInstall?: InstallState; __scaperInstallCommand?: (which: "chromium" | "firefox") => { cmd: string; args: string[] } };
 const install: InstallState = (g.__scaperBrowserInstall ??= { state: "idle", startedAt: null, finishedAt: null, log: [], error: null, percent: null });
 
 /** Names a browser file must have before Scaper will run it. */
@@ -60,8 +60,8 @@ export function findSystemBrowsers() {
   });
 }
 
-function bundledPath() {
-  try { return chromium.executablePath(); } catch { return ""; }
+function bundledPath(which: "chromium" | "firefox" = "chromium") {
+  try { return (which === "firefox" ? firefox : chromium).executablePath(); } catch { return ""; }
 }
 
 export function browserStatus() {
@@ -78,27 +78,29 @@ export function browserStatus() {
     chosen,
     chosenMissing: Boolean(chosen && !fs.existsSync(chosen)),
     bundled: { installed: bundledInstalled, path: bundled },
+    firefox: { installed: Boolean(bundledPath("firefox") && fs.existsSync(/* turbopackIgnore: true */ bundledPath("firefox"))), path: bundledPath("firefox") },
     system: findSystemBrowsers(),
     install: { ...install, log: install.log.slice(-12) },
   };
 }
 
 /** Playwright's own installer for the Chromium build this version expects. No shell, no user input in the command. */
-function installCommand() {
-  if (g.__scaperInstallCommand) return g.__scaperInstallCommand();
+function installCommand(which: "chromium" | "firefox") {
+  if (g.__scaperInstallCommand) return g.__scaperInstallCommand(which);
   const cli = path.join(/* turbopackIgnore: true */ process.cwd(), "node_modules", "playwright", "cli.js");
-  return { cmd: process.execPath, args: [cli, "install", "chromium"] };
+  return { cmd: process.execPath, args: [cli, "install", which] };
 }
 
-export function setInstallCommandForTests(fn: (() => { cmd: string; args: string[] }) | null) {
+export function setInstallCommandForTests(fn: ((which: "chromium" | "firefox") => { cmd: string; args: string[] }) | null) {
   g.__scaperInstallCommand = fn ?? undefined;
   Object.assign(install, { state: "idle", startedAt: null, finishedAt: null, log: [], error: null, percent: null });
 }
 
-export function startBrowserInstall() {
+/** Installs Playwright's Chromium (for scraping and the Browser page) or its Firefox (for the Browser page). */
+export function startBrowserInstall(which: "chromium" | "firefox" = "chromium") {
   if (install.state === "running") return browserStatus();
-  const { cmd, args } = installCommand();
-  Object.assign(install, { state: "running", startedAt: new Date().toISOString(), finishedAt: null, log: [], error: null, percent: 0 });
+  const { cmd, args } = installCommand(which);
+  Object.assign(install, { which, state: "running", startedAt: new Date().toISOString(), finishedAt: null, log: [], error: null, percent: 0 });
   log.info("browser.install_started", {});
   // PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD only stops the npm postinstall step; an explicit install should still run.
   const child = spawn(cmd, args, { cwd: /* turbopackIgnore: true */ process.cwd(), env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
@@ -122,7 +124,7 @@ export function startBrowserInstall() {
   });
   child.on("close", (code) => {
     if (install.state !== "running") return;
-    const ok = code === 0 && fs.existsSync(/* turbopackIgnore: true */ bundledPath());
+    const ok = code === 0 && fs.existsSync(/* turbopackIgnore: true */ bundledPath(which));
     Object.assign(install, {
       state: ok ? "done" : "error", finishedAt: new Date().toISOString(), percent: ok ? 100 : install.percent,
       error: ok ? null : code === 0 ? "The installer finished but the browser was not found where Playwright expects it." : installError(code),

@@ -13,7 +13,7 @@ import type { ImportReport } from "@/server/ops/config";
 import { CopyButton } from "@/components/data-table";
 import { ConfirmDialog, Dialog } from "@/components/dialog";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Callout, Card, Code, ErrorNote, Field, Input, Kbd, KeyValue, LoadingRows, PageHeader, Select, Switch, TagInput, Tabs } from "@/components/ui";
+import { Badge, Button, Callout, Card, Code, ErrorNote, Field, Input, Kbd, KeyValue, LoadingRows, PageHeader, Segmented, Select, Switch, TagInput, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api-client";
 import { bytes, dateTime, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -323,6 +323,12 @@ function DataTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
           <Field label="Picture quality (30-95)" hint="Lower is faster on slow links.">{(p) => <Input {...p} type="number" min={30} max={95} value={v.browserQuality} onChange={(e) => s.set({ browserQuality: Math.min(95, Math.max(30, Math.round(Number(e.target.value) || 70))) })} />}</Field>
           <Field label="Keep history (days)">{(p) => <Input {...p} type="number" min={1} max={3650} value={v.browserHistoryDays} onChange={(e) => s.set({ browserHistoryDays: Math.max(1, Math.round(Number(e.target.value) || 90)) })} />}</Field>
         </div>
+        <Field label="Engine" hint={v.browserEngine === "firefox" ? "Mozilla Firefox (Playwright's build; install it once from the Browser page). Add-ons are Chromium only." : v.browserEngine === "chromium" ? "Scaper's Chromium (or the browser chosen in Scraping). Add-ons work here." : "The Chrome or Edge installed on this computer. New Chrome and Edge versions do not load unpacked add-ons."}>{() => (
+          <Segmented label="Engine" value={v.browserEngine} onChange={(x) => s.set({ browserEngine: x })} options={[
+            { value: "chromium", label: "Chromium" }, { value: "chrome", label: "Google Chrome" }, { value: "msedge", label: "Microsoft Edge" }, { value: "firefox", label: "Firefox" },
+          ]} />
+        )}</Field>
+        <Switch label="Show a real browser window too" description="Opens the browser as a normal window on this computer, the same one you see on the Browser page. Use it when a site behaves differently in the picture. Needs a desktop (not a server without a screen)." checked={v.browserWindow} onChange={(x) => s.set({ browserWindow: x })} />
         <Switch label="Save history" description="Pages you open in the normal profile. Incognito and private mode never save any." checked={v.browserHistory} onChange={(x) => s.set({ browserHistory: x })} />
       </Panel>
 

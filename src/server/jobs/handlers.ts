@@ -11,6 +11,9 @@ import { checkWatcher } from "../watch/runner";
 import { syncRunToSheet } from "../integrations/sheets";
 import { runHeal } from "../ops/heal";
 import { runTaskDownloads } from "../downloads/manager";
+import { findFiles } from "../files/finder";
+import { fileFinderSchema } from "@/lib/schemas";
+import { withWork } from "../privacy";
 import type { TaskCheckpoint } from "../tasks/engine";
 import { jobFailure, JobPaused, registerJobHandler, type JobContext } from "./queue";
 
@@ -127,6 +130,15 @@ export function registerHandlers() {
     const id = String(ctx.job.input.dealSearchId ?? "");
     const out = await runDealSearch(id, { signal: ctx.signal, log: ctx.log });
     return out;
+  });
+
+  registerJobHandler("files", async (ctx) => {
+    const input = fileFinderSchema.parse(ctx.job.input);
+    // AI calls made while picking links show in the AI log under this job.
+    const out = await withWork({ purpose: "files", refId: ctx.job.id, private: ctx.job.private }, () =>
+      findFiles(input, { signal: ctx.signal, log: ctx.log, progress: ctx.progress, refId: ctx.job.id }));
+    ctx.log("info", `Found ${out.files.length} file(s) on ${out.pages.length} page(s).`);
+    return out as unknown as Record<string, unknown>;
   });
 
   registerJobHandler("backup", async (ctx) => {

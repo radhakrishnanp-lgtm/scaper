@@ -3,7 +3,7 @@ import { db } from "../db";
 import { newId, now, pageSize } from "./util";
 
 export type DownloadStatus = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
-export type DownloadSource = "manual" | "task" | "agent" | "bot" | "api";
+export type DownloadSource = "manual" | "task" | "agent" | "bot" | "api" | "finder";
 export type Download = {
   id: string; url: string; folder: string; file_name: string; path: string | null; status: DownloadStatus;
   bytes: number; total_bytes: number | null; content_type: string | null; resumable: boolean; source: DownloadSource; ref_id: string | null;

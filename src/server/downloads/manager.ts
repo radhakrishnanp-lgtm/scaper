@@ -95,6 +95,37 @@ export function queueDownloads(urls: string[], opts: { folder?: string; source: 
   return { ...out, invalid: urls.filter((u) => !/^https?:\/\//i.test(u.trim())).length };
 }
 
+/** What a link points to, without downloading it: type, size and file name (HEAD, or the first byte if HEAD is refused). */
+export async function probeFile(url: string, signal?: AbortSignal) {
+  const s = getSettings();
+  const pre = await preflight(url, { signal });
+  let current = url;
+  return withHostTurn(pre.host, pre.minDelayMs, async () => {
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      await pre.guard(current);
+      const send = (method: "HEAD" | "GET") => undiciFetch(current, {
+        method, redirect: "manual", signal, dispatcher: dispatcherFor(s.scraping.proxyUrl),
+        headers: {
+          "user-agent": pre.fastUa || DEFAULT_FAST_UA, accept: "*/*", ...(method === "GET" ? { range: "bytes=0-0" } : {}),
+          ...(new URL(current).hostname === pre.host ? pre.headers : {}),
+        },
+      });
+      let r = await send("HEAD");
+      if ([403, 405, 501].includes(r.status)) { await r.body?.cancel(); r = await send("GET"); }
+      await r.body?.cancel().catch(() => undefined);
+      if (r.status >= 300 && r.status < 400 && r.headers.get("location")) { current = new URL(r.headers.get("location")!, current).toString(); continue; }
+      const range = /\/(\d+)$/.exec(r.headers.get("content-range") ?? "")?.[1];
+      const length = Number(range ?? r.headers.get("content-length") ?? NaN);
+      return {
+        url: current, status: r.status, contentType: (r.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase() || null,
+        size: Number.isFinite(length) && r.status < 300 ? length : null, name: nameFromHeaders(r, nameFromUrl(current)),
+        attachment: /attachment/i.test(r.headers.get("content-disposition") ?? ""),
+      };
+    }
+    throw new FetchError("network", "Too many redirects.");
+  });
+}
+
 /** After a task run: queue the files linked in the chosen columns of its main dataset. */
 export function runTaskDownloads(run: ScrapeRun, o: { columns: string[]; folder: string; maxFiles: number }, taskName: string) {
   const ds: Dataset | undefined = run.result?.datasets.find((d) => d.columns.some((c) => o.columns.includes(c)));

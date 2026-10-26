@@ -3,25 +3,80 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import {
   AppWindow, ArrowLeft, ArrowRight, Bookmark as BookmarkIcon, Camera, EyeOff, Globe, History, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus,
-  Power, Puzzle, RotateCw, Sparkles, SquareDashedMousePointer, Star, StickyNote, X,
+  AlertTriangle, Download, ExternalLink, FileSearch, Power, Puzzle, RotateCw, Settings as SettingsIcon, Sparkles, SquareDashedMousePointer, Star, StickyNote, X,
 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Annotation, Bookmark, Extension } from "@/server/repo/browser";
 import type { LiveState } from "@/server/live-browser/session";
 import { AskPanel, BookmarksPanel, ExtensionsPanel, HistoryPanel, NOTE_COLORS, NotesPanel } from "@/components/browser-panels";
 import { ConfirmDialog, Dialog } from "@/components/dialog";
 import { Menu } from "@/components/menu";
 import { useToast } from "@/components/toast";
-import { Badge, Button, Callout, IconButton, Input, Tabs } from "@/components/ui";
+import { Badge, Button, Callout, IconButton, Input, Segmented, Switch, Tabs } from "@/components/ui";
 import { api, errorText } from "@/lib/api-client";
 import { useApi } from "@/lib/use-api";
 
 type Info = {
   state: LiveState; annotations: Annotation[]; bookmarks: Bookmark[]; extensions: Extension[];
-  settings: { quality: number; home: string; search: string; history: boolean; historyDays: number; privateMode: boolean };
+  settings: {
+    quality: number; home: string; search: string; history: boolean; historyDays: number; privateMode: boolean;
+    engine: Engine; window: boolean; canWindow: boolean; firefoxInstalled: boolean;
+  };
 };
+type Engine = "chromium" | "chrome" | "msedge" | "firefox";
+const ENGINE_NAME: Record<Engine, string> = { chromium: "Chromium", chrome: "Google Chrome", msedge: "Microsoft Edge", firefox: "Firefox" };
 type Frame = { data: string; width: number; height: number; scrollX: number; scrollY: number; tabId: string };
 type Side = "ai" | "notes" | "history" | "bookmarks" | "extensions";
 type Ev = Record<string, unknown> & { type: string };
+
+/** Which engine opens (Chromium, Chrome, Edge or Firefox) and whether a real window shows too. */
+function EngineChooser({ settings, onChanged }: { settings: Info["settings"]; onChanged: () => void }) {
+  const toast = useToast();
+  const [installing, setInstalling] = useState<{ percent: number | null; line: string } | null>(null);
+  const save = async (data: Partial<{ browserEngine: Engine; browserWindow: boolean }>) => {
+    try { await api("/api/settings", { method: "PUT", body: { data } }); onChanged(); }
+    catch (e) { toast.error("Could not save", errorText(e)); }
+  };
+  const installFirefox = async () => {
+    setInstalling({ percent: 0, line: "Starting…" });
+    try {
+      await api("/api/system/browser", { body: { action: "install", which: "firefox" } });
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const st = await api<{ install: { state: string; percent: number | null; log: string[]; error: string | null } }>("/api/system/browser");
+        setInstalling({ percent: st.install.percent, line: st.install.log.at(-1) ?? "" });
+        if (st.install.state === "done") { toast.success("Firefox is installed", "Open the browser to start it."); break; }
+        if (st.install.state === "error") { toast.error("Firefox could not be installed", st.install.error ?? ""); break; }
+      }
+    } catch (e) { toast.error("Could not install", errorText(e)); }
+    setInstalling(null);
+    onChanged();
+  };
+  return (
+    <div className="space-y-3 rounded-2xl border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm font-medium">Engine</span>
+        <Segmented label="Engine" value={settings.engine} onChange={(v) => void save({ browserEngine: v })} options={(Object.keys(ENGINE_NAME) as Engine[]).map((k) => ({ value: k, label: ENGINE_NAME[k] }))} />
+      </div>
+      <p className="text-xs text-muted">
+        {settings.engine === "chromium" && "Scaper's Chromium, the engine inside Chrome. Add-ons work here."}
+        {settings.engine === "chrome" && "The Google Chrome installed on this computer, with its own Scaper profile. Add-ons from the Add-ons tab load in Chromium only."}
+        {settings.engine === "msedge" && "The Microsoft Edge installed on this computer, with its own Scaper profile. Add-ons from the Add-ons tab load in Chromium only."}
+        {settings.engine === "firefox" && "Mozilla Firefox. Some sites work better in it. Add-ons from the Add-ons tab load in Chromium only."}
+      </p>
+      {settings.engine === "firefox" && !settings.firefoxInstalled && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surface-2 p-3 text-sm">
+          <Download className="size-4 text-accent" />
+          <span className="flex-1">{installing ? `Installing Firefox${installing.percent != null ? ` (${installing.percent}%)` : ""}… ${installing.line}` : "Firefox is not installed for Scaper yet (about 90 MB, once)."}</span>
+          <Button size="sm" loading={Boolean(installing)} onClick={() => void installFirefox()}>Install Firefox</Button>
+        </div>
+      )}
+      <Switch checked={settings.window} onChange={(v) => void save({ browserWindow: v })} label="Show a real window too"
+        description={settings.canWindow ? "The browser also opens as a normal window on this computer. Use it directly, or keep using it here; both are the same browser." : "This computer has no screen for a window, so the browser runs inside Scaper only."} disabled={!settings.canWindow} />
+    </div>
+  );
+}
 
 /** Sends input in order, a batch at a time, so fast typing never arrives scrambled. */
 class InputQueue {
@@ -53,6 +108,7 @@ const KEYS = new Set(["Enter", "Backspace", "Tab", "Escape", "Delete", "ArrowLef
 
 function BrowserPage() {
   const toast = useToast();
+  const router = useRouter();
   const infoApi = useApi<Info>("/api/browser");
   const info = infoApi.data;
   const [live, setState] = useState<LiveState | null>(null);
@@ -234,20 +290,21 @@ function BrowserPage() {
         <div className="space-y-2 text-center">
           <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-accent-soft text-accent"><AppWindow className="size-6" /></span>
           <h1 className="text-2xl font-semibold">Browser</h1>
-          <p className="text-sm text-muted">A real Chromium inside Scaper, shown live. Browse as usual, draw boxes and notes on any page, and ask your AI about what you see or let it click and type for you while you watch.</p>
+          <p className="text-sm text-muted">A real browser inside Scaper, shown live. Browse as usual, draw boxes and notes on any page, and ask your AI about what you see or let it click and type for you while you watch.</p>
         </div>
         {info.settings.privateMode && <Callout tone="warning" icon={<EyeOff className="size-4 text-warning" />} title="Private mode is on">The browser opens in incognito: nothing is saved.</Callout>}
+        <EngineChooser settings={info.settings} onChanged={() => void load()} />
         <div className="grid gap-3 sm:grid-cols-2">
-          <button type="button" disabled={Boolean(starting) || info.settings.privateMode} onClick={() => void start("normal")} className="space-y-1.5 rounded-2xl border border-border bg-surface p-5 text-left transition-colors hover:border-accent disabled:opacity-60">
+          <button type="button" disabled={Boolean(starting) || info.settings.privateMode || (info.settings.engine === "firefox" && !info.settings.firefoxInstalled)} onClick={() => void start("normal")} className="space-y-1.5 rounded-2xl border border-border bg-surface p-5 text-left transition-colors hover:border-accent disabled:opacity-60">
             <span className="flex items-center gap-2 font-medium"><Globe className="size-4 text-accent" />{starting === "normal" ? "Starting…" : "Open the browser"}</span>
-            <span className="block text-xs text-muted">Keeps your sign-ins, cookies, history, bookmarks and {info.extensions.filter((x) => x.enabled).length || "no"} extension{info.extensions.filter((x) => x.enabled).length === 1 ? "" : "s"} on this computer.</span>
+            <span className="block text-xs text-muted">Keeps your sign-ins, cookies, history and bookmarks on this computer{info.settings.engine === "chromium" ? `, with ${info.extensions.filter((x) => x.enabled).length || "no"} add-on${info.extensions.filter((x) => x.enabled).length === 1 ? "" : "s"}` : ""}.</span>
           </button>
-          <button type="button" disabled={Boolean(starting)} onClick={() => void start("incognito")} className="space-y-1.5 rounded-2xl border border-border bg-surface p-5 text-left transition-colors hover:border-accent disabled:opacity-60">
+          <button type="button" disabled={Boolean(starting) || (info.settings.engine === "firefox" && !info.settings.firefoxInstalled)} onClick={() => void start("incognito")} className="space-y-1.5 rounded-2xl border border-border bg-surface p-5 text-left transition-colors hover:border-accent disabled:opacity-60">
             <span className="flex items-center gap-2 font-medium"><EyeOff className="size-4 text-violet-500" />{starting === "incognito" ? "Starting…" : "Open incognito"}</span>
             <span className="block text-xs text-muted">A fresh profile in memory: no history, no cookies afterwards, no extensions. Everything goes when you close it.</span>
           </button>
         </div>
-        <p className="text-center text-xs text-muted">Sites see a normal Chromium visit from this computer. Pages your AI opens still follow robots.txt and your site rules.</p>
+        <p className="text-center text-xs text-muted">Sites see a normal {ENGINE_NAME[info.settings.engine]} visit from this computer. Pages your AI opens still follow robots.txt and your site rules.</p>
       </div>
     );
   }
@@ -304,6 +361,10 @@ function BrowserPage() {
           <Menu label="Browser menu" trigger={(p) => <IconButton size="sm" label="Browser menu" {...p}><MoreHorizontal className="size-4" /></IconButton>} items={[
             { label: "New tab", icon: <Plus />, onSelect: () => void act({ action: "newTab" }) },
             { label: incognito ? "Switch to the normal profile" : "Switch to incognito", icon: <EyeOff />, onSelect: () => void (async () => { await close(); await start(incognito ? "normal" : "incognito"); })() },
+            ...(/^https?:/.test(activeUrl) ? [
+              { label: "Find files on this page", icon: <FileSearch />, onSelect: () => router.push(`/downloads?findUrl=${encodeURIComponent(activeUrl)}`) },
+              { label: "Open in my own browser", icon: <ExternalLink />, onSelect: () => window.open(activeUrl, "_blank", "noopener") },
+            ] : []),
             { label: "History", icon: <History />, onSelect: () => { setSide("history"); setSideOpen(true); } },
             { label: "Bookmarks", icon: <BookmarkIcon />, onSelect: () => { setSide("bookmarks"); setSideOpen(true); } },
             { label: "Extensions", icon: <Puzzle />, onSelect: () => { setSide("extensions"); setSideOpen(true); } },
@@ -317,6 +378,18 @@ function BrowserPage() {
         {state.aiActing && <p className="flex items-center gap-2 bg-accent-soft px-3 py-1 text-xs text-accent" role="status"><Sparkles className="size-3.5" />Your AI is working in this tab…</p>}
         {annotating && <p className="bg-warning/10 px-3 py-1 text-xs" role="status">Drag a box over what you mean, then write a note. Press Esc or Annotate again to stop.</p>}
         {/* The page */}
+        {active?.loading && <div className="h-0.5 overflow-hidden bg-accent-soft" role="progressbar" aria-label="Loading"><div className="h-full w-1/3 animate-[indeterminate_1.2s_ease-in-out_infinite] bg-accent" /></div>}
+        {active?.problem && (
+          <div className={`flex flex-wrap items-start gap-3 border-b px-3 py-2 text-sm ${active.problem.kind === "blocked" || active.problem.kind === "http" ? "border-warning/30 bg-warning/10" : "border-danger/30 bg-danger/10"}`} role="alert">
+            <AlertTriangle className={`mt-0.5 size-4 shrink-0 ${active.problem.kind === "blocked" || active.problem.kind === "http" ? "text-warning" : "text-danger"}`} />
+            <div className="min-w-0 flex-1"><p className="font-medium">{active.problem.title}</p><p className="text-xs text-muted">{active.problem.detail}</p></div>
+            <div className="flex flex-wrap gap-1.5">
+              <Button size="sm" variant="secondary" icon={<RotateCw className="size-4" />} onClick={() => void act({ action: "reload" })}>Reload</Button>
+              {/^https?:/.test(active.url) && <Button size="sm" variant="ghost" icon={<ExternalLink className="size-4" />} onClick={() => window.open(active.url, "_blank", "noopener")}>My browser</Button>}
+              <Link href="/settings?tab=data"><Button size="sm" variant="ghost" icon={<SettingsIcon className="size-4" />}>Browser settings</Button></Link>
+            </div>
+          </div>
+        )}
         <div ref={view} className="relative min-h-0 flex-1 overflow-hidden bg-white">
           <div ref={surface} tabIndex={0} role="application" aria-label={`Web page: ${active?.title ?? ""}`}
             className={`absolute inset-0 outline-none ${annotating ? "cursor-crosshair" : "cursor-default"}`}

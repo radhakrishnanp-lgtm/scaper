@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import { Ban, CheckCircle2, Clock, Download, Eraser, ExternalLink, FolderOpen, Loader2, Pause, PauseCircle, Play, Plus, RotateCcw, Trash2, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, Clock, Download, Eraser, FileSearch, ExternalLink, FolderOpen, Loader2, Pause, PauseCircle, Play, Plus, RotateCcw, Trash2, XCircle } from "lucide-react";
 import type { Download as DownloadRow, DownloadStatus } from "@/server/repo/downloads";
 import { ConfirmDialog, Dialog } from "@/components/dialog";
 import { useLiveEvents } from "@/components/live";
@@ -11,6 +11,8 @@ import { api, errorText } from "@/lib/api-client";
 import { bytes, plural, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { useQueryState } from "@/lib/use-query-state";
+import { FindFilesDialog, FinderResults, type FinderInfo } from "@/components/file-finder";
+import { useSearchParams } from "next/navigation";
 
 type Counts = Record<DownloadStatus, number> & { bytes: number };
 type Page = { items: DownloadRow[]; counts: Counts; running: number; folder: string; concurrency: number; maxMb: number };
@@ -67,6 +69,10 @@ function Downloads() {
   const [clearing, setClearing] = useState(false);
   const [removing, setRemoving] = useState<DownloadRow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [findJob, setFindJob] = useQueryState<string>("find", "");
+  const findUrl = useSearchParams().get("findUrl") ?? "";
+  const [finding, setFinding] = useState(Boolean(findUrl));
+  const finder = useApi<FinderInfo>("/api/files");
   const qs = new URLSearchParams({ ...(filter !== "all" ? { status: filter } : {}), ...(q.trim() ? { q: q.trim() } : {}) }).toString();
   const { data, error, loading, reload } = useApi<Page>(`/api/downloads${qs ? `?${qs}` : ""}`);
   // Live progress: refresh at most twice a second while files are moving.
@@ -113,8 +119,21 @@ function Downloads() {
         actions={<>
           {c && c.paused > 0 && <Button variant="secondary" icon={<Play className="size-4" />} loading={busy === "resume:all"} onClick={() => void act("resume", "all")}>Resume all</Button>}
           {c && c.queued + c.running > 0 && <Button variant="secondary" icon={<Pause className="size-4" />} loading={busy === "pause:all"} onClick={() => void act("pause", "all")}>Pause all</Button>}
+          <Button variant="secondary" icon={<FileSearch className="size-4" />} onClick={() => setFinding(true)}>Find files on a site</Button>
           <Button icon={<Plus className="size-4" />} onClick={() => setAdding(true)}>Add downloads</Button>
         </>} />
+
+      {findJob && <FinderResults key={findJob} jobId={findJob} onClose={() => { setFindJob(""); void finder.reload(); }} onQueued={() => void reload()} />}
+      {!findJob && Boolean(finder.data?.jobs.length) && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted">
+          <span>Recent file searches:</span>
+          {finder.data!.jobs.slice(0, 5).map((j) => (
+            <button key={j.id} type="button" className="rounded-full border border-border px-2.5 py-1 hover:bg-surface-2" onClick={() => setFindJob(j.id)}>
+              {j.title.replace(/^Find files on /, "")} · {timeAgo(j.created_at)}
+            </button>
+          ))}
+        </div>
+      )}
 
       {c && (
         <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -181,6 +200,7 @@ function Downloads() {
       {data && <p className="mt-4 text-xs text-muted">Files are saved in <Code>{data.folder}</Code>. Largest file: {data.maxMb.toLocaleString("en-IN")} MB; change it and how many download at once in Settings → Data.</p>}
 
       {adding && <AddDialog onClose={() => setAdding(false)} onAdded={() => void reload()} />}
+      {finding && finder.data && <FindFilesDialog initialUrl={findUrl} ready={finder.data.ready} onClose={() => setFinding(false)} onStarted={(id) => { setFindJob(id); void finder.reload(); }} />}
       <ConfirmDialog open={clearing} onCancel={() => setClearing(false)} onConfirm={() => void clear()} title="Clear finished downloads?" confirmLabel="Clear"
         body="Removes done, failed and cancelled entries from this list. The files stay in the downloads folder." />
       <Dialog open={Boolean(removing)} onClose={() => setRemoving(null)} title={`Remove ${removing?.file_name ?? "download"}?`}

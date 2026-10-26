@@ -1,7 +1,7 @@
 import "server-only";
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, type Browser, type BrowserContext, type CDPSession, type Dialog, type Page } from "playwright";
+import { chromium, firefox, type Browser, type BrowserContext, type CDPSession, type Dialog, type Page } from "playwright";
 import { env } from "../env";
 import { executablePath } from "../fetcher/browser";
 import { FetchError } from "../fetcher/errors";
@@ -25,7 +25,10 @@ import { enabledExtensionDirs } from "./extensions";
  */
 
 export type Mode = "normal" | "incognito";
-type Tab = { id: string; page: Page; title: string; url: string; loading: boolean };
+export type Engine = "chromium" | "chrome" | "msedge" | "firefox";
+type Tab = { id: string; page: Page; title: string; url: string; loading: boolean; status: number | null; problem: Problem | null };
+/** Why a page did not load, in words, with what you can do about it. */
+export type Problem = { title: string; detail: string; kind: "network" | "blocked" | "guard" | "http" | "slow" };
 type Frame = { data: string; width: number; height: number; scrollX: number; scrollY: number; tabId: string };
 export type LiveEvent =
   | { type: "frame"; frame: Frame }
@@ -34,8 +37,8 @@ export type LiveEvent =
   | { type: "notice"; level: "info" | "warning"; message: string };
 export type LiveState = {
   open: boolean; mode: Mode | null; activeId: string | null; viewport: { width: number; height: number };
-  tabs: { id: string; title: string; url: string; loading: boolean }[];
-  extensions: number; startedAt: string | null; aiActing: boolean;
+  tabs: { id: string; title: string; url: string; loading: boolean; status: number | null; problem: Problem | null }[];
+  extensions: number; startedAt: string | null; aiActing: boolean; engine: Engine | null; window: boolean;
 };
 
 type S = {
@@ -43,17 +46,21 @@ type S = {
   cdp: CDPSession | null; streamingId: string | null; viewport: { width: number; height: number }; lastFrame: Frame | null;
   subscribers: Set<(e: LiveEvent) => void>; opening: Promise<void> | null; idle: NodeJS.Timeout | null; startedAt: string | null;
   dialog: Dialog | null; elements: Ref[]; seq: number; extensions: number; aiActing: boolean; incognitoNotes: Annotation[];
+  engine: Engine | null; window: boolean; pollSeq: number;
 };
 const g = globalThis as unknown as { __scaperLive?: S };
 const s: S = (g.__scaperLive ??= {
   mode: null, browser: null, context: null, tabs: new Map(), order: [], activeId: null, cdp: null, streamingId: null,
   viewport: { width: 1280, height: 800 }, lastFrame: null, subscribers: new Set(), opening: null, idle: null, startedAt: null,
-  dialog: null, elements: [], seq: 0, extensions: 0, aiActing: false, incognitoNotes: [],
+  dialog: null, elements: [], seq: 0, extensions: 0, aiActing: false, incognitoNotes: [], engine: null, window: false, pollSeq: 0,
 });
+s.pollSeq ??= 0;
 
 /** With nobody watching for this long, the browser closes to free memory. The normal profile keeps everything. */
 const IDLE_MS = 20 * 60_000;
-export const profileDir = () => path.join(env.dataDir, "browser-profile");
+export const profileDir = (engine: Engine = "chromium") => path.join(env.dataDir, engine === "firefox" ? "browser-profile-firefox" : engine === "chromium" ? "browser-profile" : `browser-profile-${engine}`);
+/** A real window needs a desktop; on a Linux server without one the browser runs without a window. */
+export const canShowWindow = () => process.platform !== "linux" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
 
 function emit(e: LiveEvent) {
   for (const fn of s.subscribers) { try { fn(e); } catch { /* a closed stream */ } }
@@ -61,8 +68,8 @@ function emit(e: LiveEvent) {
 
 export function liveState(): LiveState {
   return {
-    open: Boolean(s.context), mode: s.mode, activeId: s.activeId, viewport: s.viewport, extensions: s.extensions, startedAt: s.startedAt, aiActing: s.aiActing,
-    tabs: s.order.map((id) => s.tabs.get(id)!).filter(Boolean).map((t) => ({ id: t.id, title: t.title, url: t.url, loading: t.loading })),
+    open: Boolean(s.context), mode: s.mode, activeId: s.activeId, viewport: s.viewport, extensions: s.extensions, startedAt: s.startedAt, aiActing: s.aiActing, engine: s.engine, window: s.window,
+    tabs: s.order.map((id) => s.tabs.get(id)!).filter(Boolean).map((t) => ({ id: t.id, title: t.title, url: t.url, loading: t.loading, status: t.status, problem: t.problem })),
   };
 }
 let stateTimer: NodeJS.Timeout | null = null;
@@ -87,12 +94,14 @@ export function subscribe(fn: (e: LiveEvent) => void) {
   };
 }
 
-const launchOptions = (args: string[]) => {
+const launchOptions = (engine: Engine, args: string[], headless: boolean) => {
   const exe = executablePath();
   const proxyUrl = getSettings().scraping.proxyUrl;
   const proxy = proxyUrl ? (() => { const u = new URL(proxyUrl); return { server: `${u.protocol}//${u.host}`, username: u.username ? decodeURIComponent(u.username) : undefined, password: u.password ? decodeURIComponent(u.password) : undefined }; })() : undefined;
+  if (engine === "firefox") return { headless, proxy };
+  if (engine === "chrome" || engine === "msedge") return { headless, channel: engine, proxy, args };
   // Extensions need the full Chromium, not the small headless shell Playwright uses by default.
-  return { headless: true, ...(exe ? { executablePath: exe } : { channel: "chromium" }), proxy, args };
+  return { headless, ...(exe ? { executablePath: exe } : { channel: "chromium" }), proxy, args };
 };
 
 /** Opens the browser in a mode (switching mode closes the other one). */
@@ -104,18 +113,28 @@ export async function openLive(mode: Mode = "normal") {
   if (s.context) return liveState();
   s.opening = (async () => {
     const vp = s.viewport;
+    const d = getSettings().data;
+    const engine: Engine = d.browserEngine;
+    const wantWindow = d.browserWindow;
+    const headless = !(wantWindow && canShowWindow());
+    if (wantWindow && headless) emit({ type: "notice", level: "warning", message: "There is no screen on this computer for a real window, so the browser runs inside Scaper only." });
+    const type = engine === "firefox" ? firefox : chromium;
+    const ctxOptions = { viewport: vp, acceptDownloads: true, locale: "en-IN" };
     if (mode === "normal") {
-      const dirs = enabledExtensionDirs();
+      // Unpacked add-ons load in Chromium only: Firefox has its own kind, and branded Chrome and Edge dropped --load-extension.
+      const dirs = engine === "chromium" ? enabledExtensionDirs() : [];
       const ext = dirs.length ? [`--disable-extensions-except=${dirs.join(",")}`, `--load-extension=${dirs.join(",")}`] : [];
-      fs.mkdirSync(profileDir(), { recursive: true });
-      s.context = await chromium.launchPersistentContext(profileDir(), { ...launchOptions(ext), viewport: vp, acceptDownloads: true, locale: "en-IN" });
+      fs.mkdirSync(profileDir(engine), { recursive: true });
+      s.context = await type.launchPersistentContext(profileDir(engine), { ...launchOptions(engine, ext, headless), ...ctxOptions });
       s.browser = null;
       s.extensions = dirs.length;
     } else {
-      s.browser = await chromium.launch(launchOptions([]));
-      s.context = await s.browser.newContext({ viewport: vp, acceptDownloads: true, locale: "en-IN" });
+      s.browser = await type.launch(launchOptions(engine, [], headless));
+      s.context = await s.browser.newContext(ctxOptions);
       s.extensions = 0;
     }
+    s.engine = engine;
+    s.window = !headless;
     s.mode = mode;
     s.startedAt = new Date().toISOString();
     s.context.on("page", (p) => void adopt(p));
@@ -133,8 +152,12 @@ export async function openLive(mode: Mode = "normal") {
   try { await s.opening; } catch (e) {
     await closeLive("failed");
     const msg = (e as Error).message;
-    throw new FetchError("browser", /Executable doesn't exist|channel/i.test(msg)
-      ? "The browser is not installed yet. Install it in Settings → Scraping → Scraping browser (one click), then open the Browser again."
+    const engine = getSettings().data.browserEngine;
+    throw new FetchError("browser", /Executable doesn't exist|channel|Chromium distribution|is not found/i.test(msg)
+      ? engine === "firefox" ? "Firefox is not installed for Scaper yet. Press “Install Firefox” on the Browser page (one download), then open the browser again."
+        : engine === "chrome" || engine === "msedge" ? `${engine === "chrome" ? "Google Chrome" : "Microsoft Edge"} was not found on this computer. Install it, or pick another engine in Settings → Data → Browser.`
+        : "The browser is not installed yet. Install it in Settings → Scraping → Scraping browser (one click), then open the Browser again."
+      : /Missing X server|\$DISPLAY|headed browser/i.test(msg) ? "A real window needs a screen. Turn off “Show a real browser window” in Settings → Data → Browser."
       : `The browser could not start: ${msg.split("\n")[0]}`);
   } finally { s.opening = null; }
   pushState();
@@ -144,7 +167,8 @@ export async function openLive(mode: Mode = "normal") {
 export async function closeLive(reason = "you") {
   const ctx = s.context, browser = s.browser;
   s.context = null; s.browser = null; s.mode = null; s.tabs.clear(); s.order = []; s.activeId = null;
-  s.cdp = null; s.streamingId = null; s.lastFrame = null; s.dialog = null; s.startedAt = null; s.incognitoNotes = [];
+  s.cdp = null; s.streamingId = null; s.lastFrame = null; s.dialog = null; s.startedAt = null; s.incognitoNotes = []; s.engine = null; s.window = false;
+  s.pollSeq++;
   if (s.idle) { clearTimeout(s.idle); s.idle = null; }
   await ctx?.close().catch(() => undefined);
   await browser?.close().catch(() => undefined);
@@ -154,7 +178,7 @@ export async function closeLive(reason = "you") {
 
 async function adopt(page: Page, focus = true) {
   const id = `t${++s.seq}`;
-  const tab: Tab = { id, page, title: "", url: page.url(), loading: false };
+  const tab: Tab = { id, page, title: "", url: page.url(), loading: false, status: null, problem: null };
   s.tabs.set(id, tab);
   s.order.push(id);
   page.on("framenavigated", (f) => {
@@ -165,7 +189,15 @@ async function adopt(page: Page, focus = true) {
   });
   page.on("load", () => {
     tab.loading = false;
-    void page.title().then((t) => { tab.title = t; if (s.mode === "normal" && /^https?:/i.test(tab.url)) setHistoryTitle(tab.url, t); pushState(); }).catch(() => undefined);
+    void page.title().then((t) => {
+      tab.title = t;
+      if (s.mode === "normal" && /^https?:/i.test(tab.url)) setHistoryTitle(tab.url, t);
+      tab.problem = pageProblem(tab.status, t);
+      pushState();
+    }).catch(() => undefined);
+  });
+  page.on("response", (r) => {
+    if (r.request().isNavigationRequest() && r.frame() === page.mainFrame() && !(r.status() >= 300 && r.status() < 400)) { tab.status = r.status(); tab.problem = null; }
   });
   page.on("domcontentloaded", () => { void page.title().then((t) => { tab.title = t; pushState(); }).catch(() => undefined); });
   page.on("request", (r) => { if (r.isNavigationRequest() && r.frame() === page.mainFrame()) { tab.loading = true; pushState(); } });
@@ -203,7 +235,9 @@ async function activate(id: string) {
   if (s.streamingId === id && s.cdp) { pushState(); return; }
   const old = s.cdp;
   s.cdp = null;
+  s.pollSeq++;
   if (old) { await old.send("Page.stopScreencast").catch(() => undefined); await old.detach().catch(() => undefined); }
+  if (s.engine === "firefox") { startPolling(id); await tab.page.bringToFront().catch(() => undefined); pushState(); return; }
   const cdp = await s.context.newCDPSession(tab.page);
   s.cdp = cdp;
   s.streamingId = id;
@@ -216,6 +250,35 @@ async function activate(id: string) {
   await startScreencast(cdp);
   await tab.page.bringToFront().catch(() => undefined);
   pushState();
+}
+
+/**
+ * Firefox has no screencast, so the picture is a fast screenshot loop instead: only while someone watches, only
+ * frames that changed, and never more than one capture at a time, so a slow page cannot pile up work.
+ */
+function startPolling(id: string) {
+  const token = s.pollSeq;
+  s.streamingId = id;
+  let last = "";
+  void (async () => {
+    while (s.pollSeq === token && s.context) {
+      const tab = s.tabs.get(id);
+      if (!tab || tab.page.isClosed()) return;
+      if (!s.subscribers.size) { await new Promise((r) => setTimeout(r, 300)); continue; }
+      const started = Date.now();
+      try {
+        const buf = await tab.page.screenshot({ type: "jpeg", quality: getSettings().data.browserQuality, timeout: 5000, caret: "initial" });
+        const data = buf.toString("base64");
+        if (data !== last && s.pollSeq === token) {
+          last = data;
+          const [x, y] = await tab.page.evaluate(() => [window.scrollX, window.scrollY]).catch(() => [0, 0]);
+          s.lastFrame = { data, width: s.viewport.width, height: s.viewport.height, scrollX: x ?? 0, scrollY: y ?? 0, tabId: id };
+          emit({ type: "frame", frame: s.lastFrame });
+        }
+      } catch { /* the page is navigating; try again */ }
+      await new Promise((r) => setTimeout(r, Math.max(40, 110 - (Date.now() - started))));
+    }
+  })();
 }
 
 async function startScreencast(cdp: CDPSession) {
@@ -246,16 +309,51 @@ export async function navigate(input: string, tabId?: string, opts: { byAi?: boo
   if (/^https?:/i.test(url)) {
     // Your own browsing goes where you say (the network guard still applies); pages the AI opens also pass robots.txt and site rules.
     if (opts.byAi) await preflight(url);
-    else await assertPublicUrl(url, getSettings().scraping.allowPrivateNetwork);
+    else await assertPublicUrl(url, getSettings().scraping.allowPrivateNetwork).catch((e: FetchError) => {
+      tab.problem = { kind: "guard", title: "Private address blocked", detail: `${e.message} (Settings → Scraping → Allow private network.)` };
+      pushState();
+      throw e;
+    });
   }
   tab.loading = true;
   pushState();
-  await tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: getSettings().scraping.timeoutSeconds * 1000 }).catch((e: Error) => {
-    if (!/ERR_ABORTED|interrupted by another navigation/i.test(e.message)) emit({ type: "notice", level: "warning", message: `Could not open ${url}: ${e.message.split("\n")[0]!.slice(0, 200)}` });
+  tab.problem = null;
+  // Return once the page starts arriving; it keeps loading in the picture, like a normal browser.
+  await tab.page.goto(url, { waitUntil: "commit", timeout: Math.max(30, getSettings().scraping.timeoutSeconds) * 1000 }).catch((e: Error) => {
+    if (/ERR_ABORTED|interrupted by another navigation|NS_BINDING_ABORTED/i.test(e.message)) { tab.loading = false; return; }
+    tab.problem = explainLoadError(e.message, url);
+    emit({ type: "notice", level: "warning", message: `${tab.problem.title}. ${tab.problem.detail}` });
   });
-  tab.loading = false;
+  // The load event clears the spinner; a failed or aborted navigation clears it here.
+  if (tab.problem) tab.loading = false;
   pushState();
   return liveState();
+}
+
+/** Turns Chromium's and Firefox's network errors into plain words and a next step. */
+export function explainLoadError(message: string, url: string): Problem {
+  const host = (() => { try { return new URL(url).hostname; } catch { return url; } })();
+  const m = message.split("\n")[0]!;
+  if (/Timeout|timed out|ERR_TIMED_OUT|NS_ERROR_NET_TIMEOUT/i.test(m)) return { kind: "slow", title: `${host} is taking a long time`, detail: "The page did not start arriving in time. It may still load; press Reload to try again. A slow VPN or proxy can cause this." };
+  if (/ERR_NAME_NOT_RESOLVED|NS_ERROR_UNKNOWN_HOST|ENOTFOUND/i.test(m)) return { kind: "network", title: `Could not find ${host}`, detail: "Check the address. If it opens in your own browser, your VPN or DNS may only work there; set the same proxy in Settings → Scraping." };
+  if (/ERR_PROXY|NS_ERROR_PROXY|proxy/i.test(m)) return { kind: "network", title: "The proxy did not answer", detail: "Scaper's browser uses the proxy from Settings → Scraping. Check it there, or clear it to connect directly." };
+  if (/ERR_CONNECTION_REFUSED|NS_ERROR_CONNECTION_REFUSED/i.test(m)) return { kind: "network", title: `${host} refused the connection`, detail: "The site is down, or the address or port is wrong." };
+  if (/ERR_CONNECTION_(RESET|CLOSED)|ERR_EMPTY_RESPONSE|NS_ERROR_NET_RESET|NS_ERROR_NET_INTERRUPT/i.test(m)) return { kind: "network", title: `${host} closed the connection`, detail: "This happens on unstable networks and with some firewalls or VPNs. Try again." };
+  if (/ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|NS_ERROR_OFFLINE/i.test(m)) return { kind: "network", title: "No internet connection", detail: "Check your connection or VPN, then press Reload." };
+  if (/ERR_CERT|SEC_ERROR|SSL_ERROR|certificate/i.test(m)) return { kind: "network", title: `${host}'s security certificate is not valid`, detail: "Scaper does not open sites with broken certificates. If this is your own site, fix its certificate or use http:// on your local network." };
+  if (/ERR_BLOCKED_BY_CLIENT/i.test(m)) return { kind: "blocked", title: "An add-on blocked this page", detail: "Turn the add-on off in the Add-ons tab and restart the browser." };
+  return { kind: "network", title: `Could not open ${host}`, detail: m.replace(/^page\.goto:\s*/i, "").slice(0, 200) };
+}
+
+/** After a page loads: a bot check or an error status, explained. You can pass a check yourself; Scaper's AI never does. */
+export function pageProblem(status: number | null, title: string): Problem | null {
+  if (/just a moment|attention required|verify you are human|are you a robot|robot check|access denied|checking your browser/i.test(title)) {
+    return { kind: "blocked", title: "The site is checking the visitor", detail: "You can complete the check yourself in the picture. If it keeps coming back, the site blocks automated browsers: turn on “Show a real browser window” or try Firefox in Settings → Data → Browser, or open it in your own browser. Scaper does not get around these checks." };
+  }
+  if (status === 401 || status === 403) return { kind: "http", title: `The site refused access (${status})`, detail: "It may need you to sign in, or it blocks automated browsers. Signing in here keeps you signed in on the normal profile." };
+  if (status === 429) return { kind: "http", title: "The site says too many requests (429)", detail: "Wait a minute, then reload." };
+  if (status && status >= 500) return { kind: "http", title: `The site had an error (${status})`, detail: "The problem is on the site's side. Try again later." };
+  return null;
 }
 
 export async function action(a: { action: string; url?: string; tabId?: string; width?: number; height?: number; accept?: boolean; text?: string }) {

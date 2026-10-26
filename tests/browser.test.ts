@@ -119,6 +119,18 @@ describe("extension packages", () => {
   });
 });
 
+describe("load problems", () => {
+  it("explains network errors and bot checks in plain words", () => {
+    expect(live.explainLoadError("page.goto: net::ERR_NAME_NOT_RESOLVED at https://nope.example/", "https://nope.example/").title).toBe("Could not find nope.example");
+    expect(live.explainLoadError("net::ERR_PROXY_CONNECTION_FAILED", "https://a.example/").title).toMatch(/proxy/i);
+    expect(live.explainLoadError("Timeout 30000ms exceeded.", "https://a.example/").kind).toBe("slow");
+    expect(live.explainLoadError("NS_ERROR_UNKNOWN_HOST", "https://a.example/").kind).toBe("network");
+    expect(live.pageProblem(200, "Just a moment...")?.kind).toBe("blocked");
+    expect(live.pageProblem(403, "Forbidden")?.title).toMatch(/403/);
+    expect(live.pageProblem(200, "Shop")).toBeNull();
+  });
+});
+
 describe("live browser", () => {
   it("opens, streams, takes input, records history and annotations, and feeds the AI", async () => {
     site.pages.set("/form", { body: `<html><head><title>Form</title></head><body><input id="q" name="q" placeholder="Search"><a href="/listing">Listing</a><a href="/secret">Secret</a></body></html>` });
@@ -147,6 +159,43 @@ describe("live browser", () => {
     await expect(live.actForAi("click", Number(secret))).rejects.toThrow(/robots/i);
     await expect(live.actForAi("open", undefined, `${site.base}/secret`)).rejects.toThrow(/robots/i);
     off();
+  }, 60_000);
+
+  it("shows why a page did not load", async () => {
+    site.pages.set("/forbidden", { status: 403, body: "<title>Forbidden</title><h1>No</h1>" });
+    site.pages.set("/check", { body: "<title>Just a moment...</title><p>checking</p>" });
+    await live.navigate(`${site.base}/forbidden`);
+    await until(() => live.liveState().tabs[0]?.problem?.kind === "http");
+    await live.navigate(`${site.base}/check`);
+    await until(() => live.liveState().tabs[0]?.problem?.kind === "blocked");
+    await live.navigate("http://127.0.0.1:9/");
+    expect(live.liveState().tabs[0]?.problem?.title).toMatch(/refused|Could not open/);
+    await live.navigate(`${site.base}/form`);
+    await until(() => live.liveState().tabs[0]?.problem === null && !live.liveState().tabs[0]?.loading);
+  }, 60_000);
+
+  it.runIf(fs.existsSync("/usr/bin/Xvfb"))("opens as a real window when a screen is there", async () => {
+    const { spawn } = await import("node:child_process");
+    const x = spawn("/usr/bin/Xvfb", [":97", "-screen", "0", "1280x900x24"], { stdio: "ignore" });
+    await new Promise((r) => setTimeout(r, 800));
+    const display = process.env.DISPLAY;
+    process.env.DISPLAY = ":97";
+    try {
+      await live.closeLive("test");
+      saveSettings({ data: { browserWindow: true } });
+      await live.openLive("normal");
+      expect(live.liveState()).toMatchObject({ open: true, window: true, engine: "chromium" });
+      const frames: number[] = [];
+      const off = live.subscribe((e) => { if (e.type === "frame") frames.push(1); });
+      await live.navigate(`${site.base}/listing`);
+      await until(() => frames.length > 0);
+      off();
+    } finally {
+      await live.closeLive("test");
+      saveSettings({ data: { browserWindow: false } });
+      if (display === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = display;
+      x.kill();
+    }
   }, 60_000);
 
   it("keeps no history or saved notes in incognito", async () => {
