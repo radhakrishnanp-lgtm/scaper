@@ -108,7 +108,8 @@ export type BotRunOptions = {
   onPending?: (run: AgentRun, pending: PendingApproval) => void | Promise<void>;
   onDone?: (run: AgentRun) => void | Promise<void>;
 };
-export type StartAgentInput = { prompt: string; model: ModelChoice; followUpOf?: string; private?: boolean; bot?: BotRunOptions };
+/** `context` goes to the model with the prompt but is not saved as the question (e.g. the page open in Scaper's browser). */
+export type StartAgentInput = { prompt: string; model: ModelChoice; followUpOf?: string; private?: boolean; bot?: BotRunOptions; context?: string };
 
 /** Which tools a run gets: bots get their memory and notify tools but cannot manage bots; read-only bots only read. */
 export function toolsFor(opts: { bot?: Pick<BotRunOptions, "permission"> | null; team: boolean }) {
@@ -143,7 +144,7 @@ export function startAgent(input: StartAgentInput) {
   const team = settings.ai.team.enabled && !priv && (!bot || bot.helpers);
   const system = [buildSystemPrompt({ private: priv, approval, team }), bot?.system].filter(Boolean).join("\n\n");
   void withWork({ private: priv, purpose: bot ? "bot" : "agent", refId: run.id }, () =>
-    loop(run.id, [{ role: "system", content: system }, ...history, { role: "user", content: input.prompt }], input.model, bot?.maxSteps ?? settings.ai.agentMaxSteps, approval, { bot, team }));
+    loop(run.id, [{ role: "system", content: system }, ...history, { role: "user", content: input.context ? `${input.prompt}\n\n${input.context}` : input.prompt }], input.model, bot?.maxSteps ?? settings.ai.agentMaxSteps, approval, { bot, team }));
   return run;
 }
 

@@ -104,6 +104,22 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | DELETE `/api/downloads` · DELETE `/api/downloads/:id?file=1` | Clear finished rows (files stay) · remove one row, and its file with `file=1` |
 | GET `/api/downloads/:id/file?open=1` | The downloaded file (as an attachment, or inline with `open=1`, sandboxed). Only files inside the downloads folder are served |
 
+### Browser
+
+| Method & path | Purpose |
+|---|---|
+| GET `/api/browser` · POST `/api/browser` | State, annotations, bookmarks, add-ons and browser settings · `{action: open\|close, mode?: normal\|incognito}` (private mode always opens incognito) |
+| GET `/api/browser/stream` | Server-sent events: `frame` (JPEG, size, scroll offsets), `state` (tabs, mode), `dialog`, `notice`. Frames are dropped, not queued, for slow readers |
+| POST `/api/browser/input` | `{events: [...]}` up to 50 mouse (move, down, up, click, dblclick), wheel, key (with modifiers) and text events, in page pixels |
+| POST `/api/browser/action` | `navigate {url}` (a link, host or search words), `back`, `forward`, `reload`, `stop`, `newTab {url?}`, `closeTab`, `switchTab {tabId}`, `viewport {width, height}`, `dialog {accept, text?}` |
+| GET `/api/browser/screenshot?download=1` | A JPEG of the visible page |
+| GET/POST/DELETE `/api/browser/annotations` · PATCH/DELETE `/api/browser/annotations/:id` | Notes on the current page (`?all=1` for recent notes everywhere), add `{x, y, w, h, note, color}`, clear (`?url=`) · edit or delete one |
+| GET/DELETE `/api/browser/history` · GET `/api/browser/suggest?q` | History (`q`, `before`, `limit`); delete `{id}`, `{olderThanDays}` or `{all: true}` · address-bar suggestions from bookmarks and history |
+| GET/POST `/api/browser/bookmarks` · DELETE `/api/browser/bookmarks/:id` | Bookmarks `{url, title}` |
+| GET/POST `/api/browser/extensions` · PATCH/DELETE `/api/browser/extensions/:id` | Add-ons; install with `{store: "<Web Store link or id>"}` or a raw .zip/.crx body (60 MB max) · `{enabled}` or remove |
+| POST `/api/browser/ask` | `{prompt, followUpOf?, model?: main\|fast}` starts an agent run with the open page and your notes attached; poll `/api/agent/runs/:id` |
+| DELETE `/api/browser/profile` | Closes the browser and deletes its saved profile (cookies, cache, sign-ins) |
+
 ### Monitor
 
 | Method & path | Purpose | Rate limit |

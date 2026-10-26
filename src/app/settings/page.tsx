@@ -314,6 +314,18 @@ function DataTab({ data, onSaved }: { data: Resp; onSaved: (s: S) => void }) {
         </div>
       </Panel>
 
+      <Panel title="Browser" description="Scaper's own visual browser on the Browser page." footer={<Button icon={<Save className="size-4" />} loading={s.saving} onClick={() => void s.save()}>Save</Button>}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Start page" hint="Opens in new tabs. Leave empty for a blank tab.">{(p) => <Input {...p} value={v.browserHome} onChange={(e) => s.set({ browserHome: e.target.value })} />}</Field>
+          <Field label="Search with" hint="%s is replaced by what you type in the address bar." error={s.errors.browserSearch}>{(p) => <Input {...p} value={v.browserSearch} onChange={(e) => s.set({ browserSearch: e.target.value })} />}</Field>
+        </div>
+        <div className="grid gap-4 md:grid-cols-4">
+          <Field label="Picture quality (30-95)" hint="Lower is faster on slow links.">{(p) => <Input {...p} type="number" min={30} max={95} value={v.browserQuality} onChange={(e) => s.set({ browserQuality: Math.min(95, Math.max(30, Math.round(Number(e.target.value) || 70))) })} />}</Field>
+          <Field label="Keep history (days)">{(p) => <Input {...p} type="number" min={1} max={3650} value={v.browserHistoryDays} onChange={(e) => s.set({ browserHistoryDays: Math.max(1, Math.round(Number(e.target.value) || 90)) })} />}</Field>
+        </div>
+        <Switch label="Save history" description="Pages you open in the normal profile. Incognito and private mode never save any." checked={v.browserHistory} onChange={(x) => s.set({ browserHistory: x })} />
+      </Panel>
+
       <Panel title="Backups" icon={<Database className="size-4 text-muted" />} description="A consistent copy of the whole database, safe to take while Scaper runs."
         footer={<><a href="/api/data/export"><Button variant="secondary" icon={<Download className="size-4" />}>JSON export</Button></a><Button icon={<Plus className="size-4" />} loading={busy} onClick={backupNow}>Back up now</Button></>}>
         {!backups.data ? <div className="skeleton h-16 rounded-lg" /> : !backups.data.backups.length ? <p className="text-sm text-muted">No backups yet.</p> : (

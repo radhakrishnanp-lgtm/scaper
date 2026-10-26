@@ -734,6 +734,12 @@ export const dataSettingsSchema = z.object({
   // Download manager: files at once, the largest file allowed, and whether downloads continue after a restart.
   downloadConcurrency: z.number().int().min(1).max(8).default(3),
   maxDownloadMb: z.number().int().min(1).max(50_000).default(2048),
+  // Scaper's own visual browser: picture quality of the live view, start page, search, history.
+  browserQuality: z.number().int().min(30).max(95).default(70),
+  browserHome: z.string().trim().max(500).default("https://duckduckgo.com/"),
+  browserSearch: z.string().trim().max(500).refine((v) => v.includes("%s"), "Put %s where the search words go.").default("https://duckduckgo.com/?q=%s"),
+  browserHistory: z.boolean().default(true),
+  browserHistoryDays: z.number().int().min(1).max(3650).default(90),
 });
 
 export const settingsSchema = z.object({
@@ -833,3 +839,28 @@ export const botRunInputSchema = z.object({
   prompt: z.string().trim().max(8000).optional(),
   followUpOf: z.string().uuid().optional(),
 });
+
+// The visual browser.
+export const browserInputSchema = z.object({
+  events: z.array(z.discriminatedUnion("type", [
+    z.object({ type: z.literal("mouse"), kind: z.enum(["move", "down", "up", "click", "dblclick"]), x: z.number(), y: z.number(), button: z.enum(["left", "right", "middle"]).default("left") }),
+    z.object({ type: z.literal("wheel"), x: z.number(), y: z.number(), dx: z.number(), dy: z.number() }),
+    z.object({ type: z.literal("key"), key: z.string().min(1).max(40), modifiers: z.array(z.enum(["Alt", "Control", "Meta", "Shift"])).max(4).default([]) }),
+    z.object({ type: z.literal("text"), text: z.string().min(1).max(2000) }),
+  ])).min(1).max(50),
+});
+export const browserActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("navigate"), url: z.string().trim().min(1).max(4000), tabId: z.string().max(40).optional() }),
+  z.object({ action: z.enum(["back", "forward", "reload", "stop"]), tabId: z.string().max(40).optional() }),
+  z.object({ action: z.literal("newTab"), url: z.string().trim().max(4000).optional() }),
+  z.object({ action: z.enum(["closeTab", "switchTab"]), tabId: z.string().max(40) }),
+  z.object({ action: z.literal("viewport"), width: z.number().int().min(320).max(2560), height: z.number().int().min(240).max(1600) }),
+  z.object({ action: z.literal("dialog"), accept: z.boolean(), text: z.string().max(2000).optional() }),
+]);
+export const browserSessionSchema = z.object({ action: z.enum(["open", "close"]), mode: z.enum(["normal", "incognito"]).default("normal") });
+export const annotationInputSchema = z.object({
+  x: z.number().min(0).max(100_000), y: z.number().min(0).max(1_000_000), w: z.number().min(2).max(10_000), h: z.number().min(2).max(10_000),
+  note: z.string().trim().max(2000).default(""), color: z.enum(["amber", "red", "green", "blue", "violet"]).default("amber"),
+});
+export const bookmarkSchema = z.object({ url: z.string().trim().url().max(4000), title: z.string().trim().max(300).default("") });
+export const browserAskSchema = z.object({ prompt: z.string().trim().min(1).max(8000), followUpOf: z.string().uuid().optional(), model: z.enum(["main", "fast"]).default("main") });

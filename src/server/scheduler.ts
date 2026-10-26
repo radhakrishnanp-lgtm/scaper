@@ -6,6 +6,7 @@ import { pumpDownloads } from "./downloads/manager";
 import { closeBrowser } from "./fetcher/browser";
 import { enqueue, pump } from "./jobs";
 import { log } from "./log";
+import { deleteHistory } from "./repo/browser";
 import { configuredChannels, deliver, flushHeldAlerts } from "./notify";
 import { processDueDeliveries } from "./integrations/webhooks";
 import { briefingOptions, buildBriefing } from "./ops/briefing";
@@ -60,6 +61,7 @@ async function maintenance() {
     snapshots: snaps.removed, jobs: pruneJobs(d.keepJobsDays), hostStats: pruneHostStats(90), orphanMedia: await cleanOrphanMedia(),
     aiCalls: deleteAiCalls(ai.keepCallsDays), aiCache: clearAiCache(Math.max(1, ai.cacheHours)),
     deliveries: pruneDeliveries(d.keepEventsDays), runMedia: await cleanRunMedia(),
+    browserHistory: deleteHistory({ olderThanDays: d.browserHistoryDays }),
   };
   db().pragma("wal_checkpoint(TRUNCATE)");
   log.info("maintenance.done", removed);

@@ -546,6 +546,38 @@ export const TOOLS: Record<string, AgentTool> = {
     }, ["action"]),
     run: async (a, ctx) => clip(await ctx.browser.act(String(a.action), a.element ? Number(a.element) : undefined, a.text === undefined ? undefined : String(a.text)), 14_000),
   },
+  live_browser_read: {
+    group: "Browser", changes: false,
+    def: def("live_browser_read", "Read the page the user has open in Scaper's own browser (the Browser page) as Markdown with numbered links, with the boxes and notes the user drew on it. Use when the user says 'this page', 'what I'm looking at' or refers to their annotations.", {}),
+    run: async () => {
+      const { liveOpen, readForAi } = await import("../live-browser/session");
+      if (!liveOpen()) return "Scaper's browser is not open. Ask the user to open the Browser page, or use browser_open for your own tab.";
+      return clip(await readForAi(5500), 24_000);
+    },
+  },
+  live_browser_observe: {
+    group: "Browser", changes: false,
+    def: def("live_browser_observe", "List the links, buttons and fields on the page open in the user's Scaper browser, by number, for live_browser_act.", {}),
+    run: async () => {
+      const { liveOpen, observeForAi } = await import("../live-browser/session");
+      if (!liveOpen()) return "Scaper's browser is not open. Ask the user to open the Browser page.";
+      return clip(await observeForAi(), 14_000);
+    },
+  },
+  live_browser_act: {
+    group: "Browser", changes: true,
+    def: def("live_browser_act", "Do one thing in the user's own Scaper browser while they watch: open a URL (text), click, type, submit (type and press Enter), select an option, scroll ('up'/'down') or go back. The user's sign-ins are in this browser, so never buy, send, post or delete anything unless the user asked for exactly that. Never type passwords. Call live_browser_observe first for element numbers.", {
+      action: { type: "string", enum: ["open", "click", "type", "submit", "select", "scroll", "back"] },
+      element: num("Element number from live_browser_observe"),
+      text: str("URL for open, text to type, option to select, or up/down for scroll"),
+    }, ["action"]),
+    describe: (a) => `In your browser: ${String(a.action)}${a.element ? ` element [${String(a.element)}]` : ""}${a.text ? ` "${String(a.text).slice(0, 120)}"` : ""}`,
+    run: async (a) => {
+      const { liveOpen, actForAi } = await import("../live-browser/session");
+      if (!liveOpen()) return "Scaper's browser is not open. Ask the user to open the Browser page.";
+      return clip(await actForAi(String(a.action), a.element ? Number(a.element) : undefined, a.text === undefined ? undefined : String(a.text)), 14_000);
+    },
+  },
   browser_read: {
     group: "Browser", changes: false,
     def: def("browser_read", "Read the page currently open in your browser tab as Markdown with numbered links.", {}),

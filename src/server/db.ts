@@ -719,6 +719,56 @@ CREATE INDEX idx_downloads_status ON downloads(status, created_at);
 CREATE INDEX idx_downloads_created ON downloads(created_at DESC);
 `,
   },
+  {
+    id: 11,
+    name: "visual browser: history, bookmarks, extensions, annotations",
+    sql: `
+-- Pages you open in Scaper's own browser (never in incognito or private mode).
+CREATE TABLE browser_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  host TEXT NOT NULL DEFAULT '',
+  visited_at TEXT NOT NULL
+);
+CREATE INDEX idx_browser_history_time ON browser_history(visited_at DESC);
+CREATE INDEX idx_browser_history_url ON browser_history(url);
+
+CREATE TABLE browser_bookmarks (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+-- Unpacked Chrome extensions in data/browser-extensions/<id>.
+CREATE TABLE browser_extensions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'upload',
+  store_id TEXT,
+  options_page TEXT,
+  popup_page TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  installed_at TEXT NOT NULL
+);
+
+-- Boxes and notes you draw on a page for your AI.
+CREATE TABLE browser_annotations (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  x REAL NOT NULL, y REAL NOT NULL, w REAL NOT NULL, h REAL NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT 'amber',
+  element TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_browser_annotations_url ON browser_annotations(url, created_at);
+`,
+  },
 ];
 
 function migrate(db: Database.Database, upTo = Infinity) {

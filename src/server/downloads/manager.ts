@@ -279,8 +279,8 @@ async function downloadOne(d: Download, signal: AbortSignal) {
   // Done: move the .part into place and record a checksum.
   await fsp.rename(`${finalPath}.part`, finalPath!);
   const hash = createHash("sha256");
-  await pipeline(fs.createReadStream(finalPath!), hash);
-  const size = (await fsp.stat(finalPath!)).size;
+  await pipeline(fs.createReadStream(/* turbopackIgnore: true */ finalPath!), hash);
+  const size = (await fsp.stat(/* turbopackIgnore: true */ finalPath!)).size;
   updateDownload(d.id, { status: "done", bytes: size, total_bytes: size, sha256: hash.digest("hex"), finished_at: new Date().toISOString(), error: null });
   audit("downloads.done", { id: d.id, bytes: size });
 }

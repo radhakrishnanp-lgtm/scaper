@@ -1,5 +1,5 @@
 import {
-  Activity, Bell, Bot, BotMessageSquare, BrainCircuit, Database, Download, FolderTree, Gauge, Globe, Inbox, LayoutDashboard, ListChecks, Plug, Radar, Scale, ScanSearch, ScrollText, Settings, Tag,
+  Activity, AppWindow, Bell, Bot, BotMessageSquare, BrainCircuit, Database, Download, FolderTree, Gauge, Globe, Inbox, LayoutDashboard, ListChecks, Plug, Radar, Scale, ScanSearch, ScrollText, Settings, Tag,
   type LucideIcon,
 } from "lucide-react";
 
@@ -18,6 +18,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Collect",
     items: [
+      { href: "/browser", label: "Browser", icon: AppWindow, keywords: "visual browser live tabs incognito history bookmarks extensions annotate chrome" },
       { href: "/scrape", label: "Quick scrape", icon: ScanSearch, keywords: "scrape extract page url selectors" },
       { href: "/crawl", label: "Category scrape", icon: FolderTree, keywords: "categories crawl whole site ai plan listing pages" },
       { href: "/tasks", label: "Tasks", icon: ListChecks, keywords: "recipes saved scrapers crawl pagination schedule" },

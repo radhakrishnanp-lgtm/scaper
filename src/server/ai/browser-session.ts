@@ -20,11 +20,11 @@ const MAX_ACTIONS = 40;
 const IDLE_MS = 10 * 60_000;
 const MAX_ELEMENTS = 90;
 
-type Ref = { n: number; kind: string; label: string; href?: string; value?: string; password?: boolean };
+export type Ref = { n: number; kind: string; label: string; href?: string; value?: string; password?: boolean };
 
 // Collects visible interactive elements and tags each with data-scaper-ref so the next action can find it.
 // This is Scaper's own fixed script, not anything the model wrote.
-const OBSERVE = (max: number) => {
+export const OBSERVE = (max: number) => {
   const seen = new Set<Element>();
   const out: { n: number; kind: string; label: string; href?: string; value?: string; password?: boolean }[] = [];
   document.querySelectorAll("[data-scaper-ref]").forEach((el) => el.removeAttribute("data-scaper-ref"));

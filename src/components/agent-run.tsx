@@ -17,6 +17,7 @@ export const TOOL_LABEL: Record<string, string> = {
   firecrawl_scrape: "Read page with Firecrawl", web_search: "Searched the web", firecrawl_map: "Listed site pages (Firecrawl)",
   apify_find_actor: "Searched Apify Store", apify_actor_input: "Read actor input", apify_run_actor: "Ran Apify actor", create_apify_task: "Created Apify task",
   download_files: "Queued downloads", list_downloads: "Listed downloads", pause_run: "Paused run", resume_run: "Resumed run",
+  live_browser_read: "Read your browser page", live_browser_observe: "Looked at your browser page", live_browser_act: "Acted in your browser",
   read_page: "Read page", extract_items: "Extracted items", extract_with_ai: "Extracted with AI", extract_with_selectors: "Extracted with selectors",
   suggest_selectors: "Worked out selectors", map_site: "Mapped site", plan_category_scrape: "Planned category scrape",
   browser_open: "Opened in browser", browser_act: "Browser action", browser_read: "Read browser page", browser_extract: "Extracted from browser",

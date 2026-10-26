@@ -20,6 +20,8 @@ Services (src/server)
    ├─ ai/ .................. OpenAI-compatible client, AI extraction, "Build with AI" selectors, agent loop
    ├─ notify/ .............. inbox + live bus + webhook, Telegram, Discord, Slack, ntfy, email; quiet hours, digest
    ├─ ops/ ................. backups, storage, setup import/export
+   ├─ live-browser/ ........ the visual browser: one Chromium (persistent profile, or a separate incognito browser),
+   │                         CDP screencast of the active tab → SSE, batched input, tabs, add-ons, annotations, AI read/act
    └─ scheduler.ts ......... 15 s tick: enqueues due tasks, watchers, products and searches; maintenance every 6 h
    ▼
 fetcher/ ── network guard → robots.txt → site rule → per-host turn (delay, jitter, backoff) → HTTP or Chromium → bot-check detection
@@ -63,11 +65,17 @@ repo/ ── prepared statements only ── SQLite (data/scaper.db, WAL)
 | `agent_runs` | Agent transcripts; `parent_id` links follow-ups; `bot_id` and `trigger` mark bot runs | Bot runs are left out of the agent page's list |
 | `bots` · `bot_memory` · `bot_evals` | Your bots (settings as JSON, `next_run_at` for the scheduler, last outcome), each bot's own memory (facts, lessons, plus a summary of each of its last 20 runs) and each run's grade with your 👍/👎 and note | Memory and grades are deleted with the bot |
 | `downloads` | The download manager: one row per file with status, bytes, total, whether the server allows resuming, sha256 and the error | Finished rows cleared on request |
+| `browser_history` · `browser_bookmarks` | Visual browser history (normal mode only, one row per page per minute) and bookmarks | History pruned after N days (Settings → Data) |
+| `browser_extensions` · `browser_annotations` | Installed add-ons (files in `data/browser-extensions`) and your boxes and notes with the element under them | Incognito notes are never written |
 | `ai_usage` | Requests and tokens per day | Enforces the daily cap |
 | `api_tokens` | Hashed API tokens | |
 | `event_log` | Audit log (Logs page) | Kept N days |
 
 Migrations live in `src/server/db.ts` (numbered, applied in a transaction at startup).
+
+## Visual browser
+
+One Chromium runs at a time. Normal mode uses `launchPersistentContext(data/browser-profile)` with your enabled add-ons loaded; incognito uses a separate `launch()` and a fresh context. The active tab streams through CDP `Page.startScreencast` (JPEG at the quality in Settings, at most the size of your view). Each frame is acknowledged at once and the latest frame replaces the previous one, so a slow connection drops frames rather than building up a delay. The view's size sets the viewport, so the picture is 1:1 and clicks map straight to page pixels. Input is sent in small batches. There is no request interception, which keeps the browser's own cache and speed. The browser closes 20 minutes after the last viewer leaves. The AI reads the page through the same Markdown context builder as elsewhere and acts through numbered elements (the agent browser's `OBSERVE` script), with `preflight` before and after each step.
 
 ## Bots
 

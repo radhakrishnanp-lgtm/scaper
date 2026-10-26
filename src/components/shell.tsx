@@ -334,7 +334,7 @@ function ShellInner({ children, passwordProtected }: { children: ReactNode; pass
           </div>
         </header>
 
-        <main id="main" className="mx-auto w-full max-w-7xl min-w-0 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</main>
+        <main id="main" className={`mx-auto w-full min-w-0 ${pathname.startsWith("/browser") ? "max-w-none px-2 py-2 sm:px-3" : "max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8"}`}>{children}</main>
       </div>
 
       {drawer && (
