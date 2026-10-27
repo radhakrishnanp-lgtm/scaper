@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   ArrowDown, ArrowUp, BarChart3, Bookmark, Calendar, Check, ClipboardCopy, Columns3, Download, Hash, ImageIcon, Link2, Mail, Pin, PinOff, Rows2, Rows4, Save,
   ToggleLeft, Trash2, Type, WrapText, X,
+  Sparkles,
 } from "lucide-react";
 import type { Cell, Dataset } from "@/lib/types";
 import { toCsv } from "@/lib/csv";
@@ -13,6 +14,7 @@ import { api, errorText } from "@/lib/api-client";
 import { Dialog } from "./dialog";
 import { Menu, Popover, type MenuItem } from "./menu";
 import { useToast } from "./toast";
+import { openAssistant } from "./assistant";
 import { Badge, Button, Checkbox, IconButton, Input, KeyValue, SearchInput } from "./ui";
 
 const isUrl = (v: Cell) => typeof v === "string" && /^https?:\/\//.test(v);
@@ -310,6 +312,12 @@ export function DataTable({ dataset, exportHref, fill, fileName = "data", compac
           </span>
         )}
         <div className="ml-auto flex items-center gap-1">
+          {!compact && (
+            <Button size="sm" variant="ghost" icon={<Sparkles className="size-4 text-accent" />} onClick={() => {
+              const list = chosen();
+              openAssistant({ rows: { source: dataset.name, columns: dataset.columns.filter((c) => !hidden.has(c)), items: list } });
+            }}>{selected.size ? `Ask AI about ${selected.size.toLocaleString("en-IN")}` : "Ask AI"}</Button>
+          )}
           {viewScope && (
             <Popover label="Saved views" panelClassName="w-72" trigger={(p) => <Button {...p} size="sm" variant="ghost" icon={<Bookmark className="size-4" />}>{current ? current.name : "Views"}</Button>}>
               {(close) => (

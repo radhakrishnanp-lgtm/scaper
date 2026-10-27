@@ -10,6 +10,7 @@ import type { Job } from "@/server/repo/jobs";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
 import { timeAgo } from "@/lib/format";
+import { AssistantButton } from "./assistant";
 import { CommandPalette } from "./command-palette";
 import { LiveProvider, useLive } from "./live";
 import { Popover } from "./menu";
@@ -330,6 +331,7 @@ function ShellInner({ children, passwordProtected }: { children: ReactNode; pass
           <div className="ml-auto flex items-center gap-1">
             <PrivateIndicator />
             <JobsIndicator />
+            <AssistantButton />
             <AlertsPopover />
           </div>
         </header>

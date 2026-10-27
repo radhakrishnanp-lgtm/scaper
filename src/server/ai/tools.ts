@@ -14,12 +14,13 @@ import { configuredChannels, deliver } from "../notify";
 import { enqueueAndWait } from "../jobs";
 import { addMemory, deleteMemory, listMemory } from "../repo/ai";
 import { aiCostThisMonth, aiUsageToday } from "../repo/agent";
-import { createDealSearch, listDealSearches } from "../repo/deal-searches";
+import { createDealSearch, deleteDealSearch, listDealSearches } from "../repo/deal-searches";
 import { audit } from "../repo/events";
-import { deleteProduct, getProductByUrl, listProducts } from "../repo/products";
+import { deleteProduct, getProductByUrl, listProducts, updateProductSettings } from "../repo/products";
+import { listNotifications, markRead, unreadCount } from "../repo/notifications";
 import { createRecipe, deleteRecipe, getRecipe, getRun, listRecipes, listRuns, recentGoodCounts, runHistory, setRecipeSchedulePaused, updateRecipe, validateCron, type Recipe } from "../repo/scrapes";
 import { getSiteRule, hostSummaries, upsertSiteRule } from "../repo/sites";
-import { changesSince, createWatcher, deleteWatcher, getWatcher, listChanges, listWatchers, reviewAll, setWatcherEnabled, triageChanges, type Watcher } from "../repo/watchers";
+import { changesSince, createWatcher, deleteWatcher, getWatcher, listChanges, listWatchers, reviewAll, setWatcherEnabled, triageChanges, updateWatcher, watcherVersionData, type Watcher } from "../repo/watchers";
 import { getJob, jobLogs } from "../repo/jobs";
 import { pendingProposal } from "../repo/heal";
 import { listIssues } from "../repo/quality";
@@ -42,7 +43,7 @@ import { suggestSelectors } from "./suggest";
 
 export type ToolContext = { browser: AgentBrowser; signal: AbortSignal; model: ModelChoice; runId?: string; botId?: string };
 export type AgentTool = {
-  group: "Read the web" | "Browser" | "Tasks & data" | "Watchers" | "Prices & deals" | "Scaper" | "Knowledge" | "Bots" | "Firecrawl & Apify" | "Downloads & runs";
+  group: "Read the web" | "Browser" | "Tasks & data" | "Watchers" | "Prices & deals" | "Scaper" | "Knowledge" | "Bots" | "Firecrawl & Apify" | "Downloads & runs" | "Alerts";
   changes: boolean;
   def: ToolDef;
   /** One line for the approval card: what exactly will happen. */
@@ -369,7 +370,7 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
     find_files: {
       group: "Downloads & runs", changes: false,
       def: def("find_files", "Find the files a site offers (PDF, EPUB and other ebooks, images, video, audio, documents, archives, or any file ending), including lists where each item links to its own page with the real download link. Walks the start pages, their next pages and item pages up to `depth` hops, with robots.txt and the site's delays. Returns the file links (use download_files to save them). picker: rules (Scaper's own), ai (the fast model reads each page's links with the instruction) or firecrawl (Firecrawl's AI, needs its key).", {
-        urls: { type: "array", items: { type: "string" }, description: "Start pages (the list of files)" },
+        urls: { type: "array", items: { type: "string" }, description: "Start pages: a list of files, or many item pages at once (up to 200, for example the links in rows the user selected)" },
         kinds: { type: "array", items: { type: "string", enum: ["pdf", "ebook", "image", "video", "audio", "document", "archive"] }, description: "Kinds of file. Default pdf and ebook" },
         extensions: { type: "array", items: { type: "string" }, description: "Other file endings, like srt or psd" },
         instruction: str("What to look for, in the user's words, for the ai or firecrawl picker"),
@@ -382,8 +383,10 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
         const { fileFinderSchema } = await import("@/lib/schemas");
         const arr = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).map(String) : undefined);
         const input = fileFinderSchema.parse({
-          urls: arr(a.urls)?.slice(0, 20), kinds: arr(a.kinds), extensions: arr(a.extensions), instruction: a.instruction ? String(a.instruction) : undefined,
-          picker: a.picker ?? undefined, depth: a.depth != null ? Number(a.depth) : undefined, maxPages: a.max_pages != null ? Math.min(Number(a.max_pages), 200) : undefined,
+          urls: arr(a.urls)?.slice(0, 200), kinds: arr(a.kinds), extensions: arr(a.extensions), instruction: a.instruction ? String(a.instruction) : undefined,
+          picker: a.picker ?? undefined, depth: a.depth != null ? Number(a.depth) : undefined,
+          // Each start page counts as a page, so many item pages get room to be read.
+          maxPages: Math.min(500, a.max_pages != null ? Number(a.max_pages) : Math.max(40, (arr(a.urls)?.length ?? 0) * 2)),
           mode: a.mode ?? undefined, download: false,
         });
         const job = await enqueueAndWait({ kind: "files", title: `Find files on ${new URL(input.urls[0]!).hostname}`, trigger: "agent", input: input as unknown as Record<string, unknown> }, 300_000);
@@ -927,6 +930,98 @@ export const TOOLS: Record<string, AgentTool> = {
   },
 
   // Scaper
+  update_watcher: {
+    group: "Watchers", changes: true,
+    describe: (a) => `Change the watcher "${short(a.watcher)}"${a.name ? `: rename to "${short(a.name)}"` : ""}${a.interval_minutes ? `, check every ${Math.max(5, Math.round(Number(a.interval_minutes)))} min` : ""}${a.condition ? `, alert on ${a.condition === "any_change" ? "any change" : `${a.condition} ${a.text ?? a.value ?? ""}`}` : ""}.`,
+    def: def("update_watcher", "Change a watcher's name, how often it checks, or when it alerts. The old version is kept and can be restored on the watcher's Versions tab.", {
+      watcher: str("Watcher id or name"), name: str("New name, optional"), interval_minutes: num("How often to check, minimum 5, optional"),
+      condition: { type: "string", enum: ["any_change", "contains", "not_contains", "below", "above"], description: "When to alert, optional" },
+      text: str("Text for contains / not_contains"), value: num("Number for below / above"),
+    }, ["watcher"]),
+    run: async (a) => {
+      const w = findWatcher(a.watcher);
+      const input = watcherVersionData(w);
+      if (typeof a.name === "string" && a.name.trim()) input.name = a.name.trim().slice(0, 120);
+      if (a.interval_minutes != null) input.intervalMinutes = Math.max(5, Math.round(Number(a.interval_minutes)));
+      if (typeof a.condition === "string") {
+        input.condition = conditionSchema.parse(a.condition === "contains" || a.condition === "not_contains" ? { type: a.condition, text: a.text }
+          : a.condition === "below" || a.condition === "above" ? { type: a.condition, value: Number(a.value) } : { type: "any_change" });
+      }
+      const updated = updateWatcher(w.id, watcherSchema.parse(input), { source: "agent", note: "Changed by the AI" });
+      audit("watcher.updated", { watcherId: w.id, by: "agent" });
+      return j({ updated: true, name: updated?.name, checks_every_minutes: updated?.interval_minutes, open: `/watchers/${w.id}` });
+    },
+  },
+  set_price_alert: {
+    group: "Prices & deals", changes: true,
+    describe: (a) => `Alert when "${short(a.product)}" is at or below ${a.target_price ?? "(no target)"}${a.interval_minutes ? `, checking every ${a.interval_minutes} min` : ""}.`,
+    def: def("set_price_alert", "Set or clear the target price of a tracked product (alert when the price is at or below it), and optionally how often it is checked or pause it.", {
+      product: str("Product URL, id or part of its title"), target_price: num("Target price; 0 clears it"), interval_minutes: num("How often to check, optional"), paused: bool("Pause or resume checks, optional"),
+    }, ["product"]),
+    run: async (a) => {
+      const k = String(a.product ?? "").trim().toLowerCase();
+      const p = getProductByUrl(String(a.product ?? "")) ?? listProducts().find((x) => x.id === a.product || (x.title ?? "").toLowerCase().includes(k));
+      if (!p) throw new Error(`No tracked product matches "${short(a.product)}". Use list_tracked_products.`);
+      const target = a.target_price == null ? undefined : Number(a.target_price) > 0 ? Number(a.target_price) : null;
+      const out = updateProductSettings(p.id, { targetPrice: target, intervalMinutes: a.interval_minutes != null ? Math.max(15, Math.round(Number(a.interval_minutes))) : undefined, enabled: typeof a.paused === "boolean" ? !a.paused : undefined });
+      audit("product.updated", { productId: p.id, by: "agent" });
+      return j({ updated: true, title: out?.title, target_price: out?.target_price, checks_every_minutes: out?.interval_minutes, enabled: out?.enabled, open: `/deals/products/${p.id}` });
+    },
+  },
+  list_deal_searches: {
+    group: "Prices & deals", changes: false,
+    def: def("list_deal_searches", "List saved deal searches with their filters, schedule and last result.", {}),
+    run: async () => j({ searches: listDealSearches().map((d) => ({ id: d.id, name: d.name, url: d.url, filters: d.filters, schedule_minutes: d.schedule_minutes, alerts_on_new: d.notify_new, last_run_at: d.last_run_at, last_status: d.last_status, last_count: d.last_count })) }),
+  },
+  delete_deal_search: {
+    group: "Prices & deals", changes: true,
+    describe: (a) => `Delete the deal search "${short(a.search)}".`,
+    def: def("delete_deal_search", "Delete a saved deal search. Only when the user clearly asks.", { search: str("Deal search id or name") }, ["search"]),
+    run: async (a) => {
+      const k = String(a.search ?? "").trim().toLowerCase();
+      const d = listDealSearches().find((x) => x.id === a.search || x.name.toLowerCase() === k);
+      if (!d) throw new Error(`No deal search called "${short(a.search)}". Use list_deal_searches.`);
+      deleteDealSearch(d.id);
+      audit("deal_search.deleted", { id: d.id, by: "agent" });
+      return j({ deleted: d.name });
+    },
+  },
+  list_alerts: {
+    group: "Alerts", changes: false,
+    def: def("list_alerts", "The user's alert inbox: watcher changes, price alerts, new deals, finished or failed tasks and bot messages, newest first, with how many are unread.", {
+      unread_only: bool("Only unread ones"), kind: str("Optional kind filter, like watcher, price, deal, task, bot"), limit: num("Default 20, at most 100"),
+    }),
+    run: async (a) => {
+      const { items } = listNotifications({ limit: Math.min(100, Math.max(1, Number(a.limit ?? 20))), unreadOnly: a.unread_only === true, kind: a.kind ? String(a.kind) : undefined });
+      return j({ unread: unreadCount(), alerts: items.map((n) => ({ id: n.id, kind: n.kind, title: n.title, body: n.body.slice(0, 400), url: n.url, read: Boolean(n.read_at), at: n.created_at })) });
+    },
+  },
+  mark_alerts_read: {
+    group: "Alerts", changes: true,
+    describe: (a) => (a.all ? "Mark every alert as read." : `Mark ${Array.isArray(a.ids) ? a.ids.length : 0} alert(s) as read.`),
+    def: def("mark_alerts_read", "Mark alerts in the inbox as read.", { ids: { type: "array", items: { type: "string" }, description: "Alert ids from list_alerts" }, all: bool("Mark all as read") }),
+    run: async (a) => j({ marked: markRead(a.all === true ? "all" : Array.isArray(a.ids) ? (a.ids as unknown[]).map(String).slice(0, 500) : []) }),
+  },
+  check_links: {
+    group: "Downloads & runs", changes: false,
+    def: def("check_links", "Check links without downloading them: whether each is a file (type, size, file name) or a web page, or broken. Use before downloading links from scraped rows: files go to download_files, pages to find_files (to find the file link on them). robots.txt and site rules apply.", {
+      urls: { type: "array", items: { type: "string" }, description: "Links to check, at most 50" },
+    }, ["urls"]),
+    run: async (a, ctx) => {
+      const { probeFile } = await import("../downloads/manager");
+      const urls = [...new Set((Array.isArray(a.urls) ? (a.urls as unknown[]).map(String) : []).filter((u) => /^https?:\/\//i.test(u)))].slice(0, 50);
+      const out: Record<string, unknown>[] = [];
+      for (const u of urls) {
+        if (ctx.signal?.aborted) break;
+        try {
+          const p = await probeFile(u, ctx.signal);
+          const page = /html|xml/.test(p.contentType ?? "");
+          out.push({ url: u, status: p.status, ok: p.status < 400, kind: p.status >= 400 ? "broken" : page ? "web page" : "file", type: p.contentType, size: p.size, name: page ? undefined : p.name, final_url: p.url !== u ? p.url : undefined });
+        } catch (e) { out.push({ url: u, ok: false, kind: "error", error: (e as Error).message.slice(0, 200) }); }
+      }
+      return j({ checked: out.length, files: out.filter((x) => x.kind === "file").length, pages: out.filter((x) => x.kind === "web page").length, results: out });
+    },
+  },
   notify_user: {
     group: "Scaper", changes: true,
     describe: (a) => `Send you an alert: "${short(a.title, 80)}" (to your inbox and alert channels).`,

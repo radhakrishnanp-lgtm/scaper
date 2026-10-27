@@ -853,7 +853,7 @@ export type FileKind = keyof typeof FILE_KINDS;
 export const fileKindSchema = z.enum(Object.keys(FILE_KINDS) as [FileKind, ...FileKind[]]);
 
 export const fileFinderSchema = z.object({
-  urls: z.array(z.string().trim().url("Enter a full link, starting with http:// or https://").max(2048)).min(1, "Add at least one page").max(20),
+  urls: z.array(z.string().trim().url("Enter a full link, starting with http:// or https://").max(2048)).min(1, "Add at least one page").max(500),
   kinds: z.array(fileKindSchema).max(7).default(["pdf", "ebook"]),
   extensions: z.array(z.string().trim().toLowerCase().regex(/^[a-z0-9]{1,8}$/, "Use letters and digits, like srt")).max(20).default([]),
   /** What to look for, in your words, for your AI or Firecrawl's. */
@@ -873,6 +873,23 @@ export const fileFinderSchema = z.object({
   folder: z.string().trim().max(80).default(""),
 });
 export type FileFinderInput = z.infer<typeof fileFinderSchema>;
+
+// The AI assistant on every page: one conversation, with the page you are on and what you selected.
+export const assistantRequestSchema = z.object({
+  prompt: z.string().trim().min(2, "Ask something").max(4000),
+  followUpOf: z.string().max(40).optional(),
+  model: z.enum(["main", "fast"]).default("main"),
+  /** The page you are on, like /tasks/abc. */
+  page: z.string().trim().max(300).default("/"),
+  /** Rows you selected in a data table. */
+  rows: z.object({
+    source: z.string().trim().max(300).default(""),
+    columns: z.array(z.string().max(200)).max(200).default([]),
+    items: z.array(z.record(z.string(), z.unknown())).max(2000),
+  }).optional(),
+  /** One thing you asked about, like an alert or a change. */
+  focus: z.object({ kind: z.string().max(40), id: z.string().max(80).optional(), title: z.string().max(300), body: z.string().max(2000).default(""), url: z.string().max(2048).nullable().optional() }).optional(),
+});
 
 export const botRunInputSchema = z.object({
   prompt: z.string().trim().max(8000).optional(),

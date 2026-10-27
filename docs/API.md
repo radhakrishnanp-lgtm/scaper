@@ -120,6 +120,12 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 | POST `/api/browser/ask` | `{prompt, followUpOf?, model?: main\|fast}` starts an agent run with the open page and your notes attached; poll `/api/agent/runs/:id` |
 | DELETE `/api/browser/profile` | Closes the browser and deletes its saved profile (cookies, cache, sign-ins) |
 
+### Assistant
+
+| Method & path | Purpose |
+|---|---|
+| POST `/api/assistant` | `{prompt, followUpOf?, model?: main\|fast, page, rows?: {source, columns, items[] (up to 2000; about 40 000 characters reach the model)}, focus?: {kind, id?, title, body?, url?}}` starts an agent run with the page you are on, recent alerts, changes to review, running jobs and your selection. Poll `/api/agent/runs/:id` |
+
 ### File finder
 
 | Method & path | Purpose |
