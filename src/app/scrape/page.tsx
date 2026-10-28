@@ -47,7 +47,7 @@ function ScrapePage() {
     if (w === "ai") { setMode("auto"); setExtract(aiExtract()); }
     if (w === "firecrawl") { setMode("firecrawl"); setExtract(aiExtract()); }
   };
-  const findFiles = () => router.push(`/downloads?findUrl=${encodeURIComponent(fullUrl)}${fileText.trim() ? `&findText=${encodeURIComponent(fileText.trim())}` : ""}`);
+  const findFiles = () => router.push(`/bulk?url=${encodeURIComponent(fullUrl)}${fileText.trim() ? `&text=${encodeURIComponent(fileText.trim())}` : ""}`);
   const [steps, setSteps] = useState<BrowserStep[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ type: "none" });
   const [screenshot, setScreenshot] = useState(false);
@@ -182,7 +182,7 @@ function ScrapePage() {
               </div>
 
               <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-                {goal === "files" ? <Button type="submit" icon={<FileSearch className="size-4" />} disabled={!url.trim()}>Find files</Button> : <>
+                {goal === "files" ? <Button type="submit" icon={<FileSearch className="size-4" />} disabled={!url.trim()}>Open the bulk downloader</Button> : <>
                 <Button type="submit" loading={busy} icon={<Play className="size-4" />}>{busy ? "Scraping…" : "Scrape"}</Button>
                 <Button type="button" variant="secondary" icon={<Save className="size-4" />} onClick={saveAsTask} loading={saving} disabled={!url}>Save as task</Button>
                 {extract.type === "selectors" && extract.fields.length === 0 && <Button type="button" variant="ghost" onClick={() => setExtract({ ...extract, fields: [newField("title")] })}>Add a field</Button>}

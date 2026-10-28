@@ -124,6 +124,7 @@ A wrong or revoked token always gets `401`, even when no app password is set.
 
 | Method & path | Purpose |
 |---|---|
+| GET `/api/downloads?ref=<jobId>` | Only the downloads a file search (bulk download) queued. With `download: true`, POST `/api/files` queues each file as soon as it is found |
 | POST `/api/agent/runs/:id/stop` | Stops a running AI run (the assistant, the agent page, the browser AI or a bot run). The model call, page load and any job the run waits on (file search, task, watcher check) are cancelled. |
 | GET `/api/integrations` | … `firecrawl.usage` `{today: {calls, credits, byKind}, last30Days}` and `firecrawl.dailyCredits` (the limit from `integrations.firecrawlDailyCredits`, 0 = none) |
 | POST `/api/assistant` | `{prompt, followUpOf?, model?: main\|fast, page, session?: {key, name} (a focused chat about one data set, task, watcher, product or site), rows?: {source, columns, items[] (up to 2000; about 40 000 characters reach the model)}, focus?: {kind, id?, title, body?, url?}}` starts an agent run with the page you are on, recent alerts, changes to review, running jobs and your selection. Poll `/api/agent/runs/:id` |

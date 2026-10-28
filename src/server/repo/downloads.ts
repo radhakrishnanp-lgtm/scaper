@@ -39,9 +39,10 @@ export function getDownload(id: string): Download | null {
   return r ? toDownload(r) : null;
 }
 
-export function listDownloads(opts: { status?: string; q?: string; limit?: number } = {}) {
+export function listDownloads(opts: { status?: string; q?: string; limit?: number; refId?: string } = {}) {
   const where: string[] = [];
   const args: unknown[] = [];
+  if (opts.refId) { where.push("ref_id = ?"); args.push(opts.refId); }
   if (opts.status === "active") where.push("status IN ('queued','running','paused')");
   else if (opts.status) { where.push("status = ?"); args.push(opts.status); }
   if (opts.q) { where.push("(url LIKE ? OR file_name LIKE ? OR folder LIKE ?)"); args.push(`%${opts.q}%`, `%${opts.q}%`, `%${opts.q}%`); }

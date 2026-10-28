@@ -228,3 +228,23 @@ describe("the AI and bots know Firecrawl", () => {
     expect(seen.some((u) => u.includes(`only about "Shop prices"`))).toBe(true);
   });
 });
+
+describe("bulk download", () => {
+  it("reads what to download from plain words", async () => {
+    const { kindsFromText } = await import("@/lib/schemas");
+    expect(kindsFromText("all the lecture PDFs and the slides").kinds.sort()).toEqual(["document", "pdf"]);
+    expect(kindsFromText("every wallpaper photo").kinds).toEqual(["image"]);
+    expect(kindsFromText("subtitles .srt").extensions).toEqual(["srt"]);
+    expect(kindsFromText("everything on this site").kinds).toHaveLength(7);
+  });
+
+  it("starts downloading files while the search goes on, tagged with the search", async () => {
+    const { listDownloads } = await import("@/server/repo/downloads");
+    pages.set("/shelf", { body: `<html><body><main><a href="/files/manual.pdf">Manual</a><a href="/docs/guide">Guide</a></main></body></html>` });
+    const r = await findFiles(fileFinderSchema.parse({ urls: [`${base}/shelf`], kinds: ["pdf"], depth: 2, mode: "fast", download: true, folder: "Bulk test" }), { refId: "bulk-1" });
+    expect(r.queued).toBeGreaterThanOrEqual(1);
+    const mine = listDownloads({ refId: "bulk-1" }).map((d) => d.url);
+    expect(mine).toContain(`${base}/files/manual.pdf`);
+    expect(new Set(mine).size).toBe(mine.length);
+  });
+});

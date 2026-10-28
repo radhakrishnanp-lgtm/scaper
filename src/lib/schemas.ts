@@ -854,6 +854,21 @@ export const FILE_KINDS = {
   archive: ["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz"],
 } as const;
 export type FileKind = keyof typeof FILE_KINDS;
+
+const KIND_WORDS: [FileKind, RegExp][] = [
+  ["pdf", /\bpdfs?\b/i], ["ebook", /\b(e-?books?|epubs?|mobi|azw3?|kindle|books?)\b/i],
+  ["image", /\b(images?|photos?|pictures?|pics?|wallpapers?|jpe?g|png|gif|webp|svg|icons?|thumbnails?)\b/i],
+  ["video", /\b(videos?|movies?|clips?|mp4|webm|mkv|mov|trailers?)\b/i], ["audio", /\b(audio|music|songs?|mp3|podcasts?|sounds?|wav|flac)\b/i],
+  ["document", /\b(docs?|documents?|word|excel|spreadsheets?|sheets?|csv|pptx?|slides?|presentations?|txt|docx|xlsx)\b/i],
+  ["archive", /\b(zips?|archives?|rar|7z|tar|gz)\b/i],
+];
+/** Reads "all the PDFs and chapter EPUBs" as kinds and endings. Nothing named means every kind. */
+export function kindsFromText(text: string): { kinds: FileKind[]; extensions: string[] } {
+  const kinds = KIND_WORDS.filter(([, re]) => re.test(text)).map(([k]) => k);
+  const known = new Set(Object.values(FILE_KINDS).flat() as string[]);
+  const extensions = [...new Set([...text.matchAll(/(?:^|\s)\.([a-z0-9]{1,8})\b/gi)].map((m) => m[1]!.toLowerCase()).filter((e) => !known.has(e)))].slice(0, 20);
+  return { kinds: kinds.length || extensions.length ? kinds : (Object.keys(FILE_KINDS) as FileKind[]), extensions };
+}
 export const fileKindSchema = z.enum(Object.keys(FILE_KINDS) as [FileKind, ...FileKind[]]);
 
 export const fileFinderSchema = z.object({

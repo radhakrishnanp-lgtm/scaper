@@ -186,6 +186,16 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
     files.set(url, { url, name: name.slice(0, 200), ext, kind, from, text, size: extra.size ?? null, contentType: extra.contentType ?? null });
     return true;
   };
+  // With download on, files start downloading as soon as they are found, while the search goes on.
+  let queued = 0, skippedQueued = 0;
+  const sent = new Set<string>();
+  const startDownloads = () => {
+    const fresh = [...files.keys()].filter((u) => !sent.has(u));
+    if (!fresh.length) return;
+    for (const u of fresh) sent.add(u);
+    const out = queueDownloads(fresh, { folder: input.folder || "Found files", source: "finder", refId: hooks.refId ?? null });
+    queued += out.added.length; skippedQueued += out.skipped;
+  };
   const allowedSite = (u: string) => !input.sameSite || starts.some((s) => sameSite(s, u));
 
   // One Firecrawl map call lists the whole site (about 1 credit), so file links come without opening every page.
@@ -203,6 +213,7 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
           const kind = wanted.get(ext);
           if (kind && allowedSite(l.url) && addFile(l.url, ext, kind, `${new URL(start).origin} (site map)`, l.title)) n++;
         }
+        if (input.download) startDownloads();
         say("info", `Firecrawl's site map of ${new URL(start).hostname}: ${links.length} link(s), ${n} wanted file(s). About 1 credit.`);
       } catch (e) {
         if (hooks.signal?.aborted) break;
@@ -289,6 +300,7 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
       for (const f of fresh) (f.depth === item.depth ? queue.unshift.bind(queue) : queue.push.bind(queue))({ url: f.url, depth: f.depth, from: finalUrl });
       visit.followed = fresh.length;
       visit.files = files.size - before;
+      if (input.download && files.size > before) startDownloads();
       say("info", `${finalUrl}: ${visit.files} file(s), ${fresh.length} page(s) to open${item.depth ? ` (${item.depth} hop${item.depth > 1 ? "s" : ""} from the start)` : ""}.`);
     } catch (e) {
       // Stopped: keep what was found so far.
@@ -300,12 +312,8 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
     }
   }
   const list = [...files.values()];
-  let queued = 0, skippedQueued = 0;
-  if (input.download && list.length) {
-    const out = queueDownloads(list.map((f) => f.url), { folder: input.folder || "Found files", source: "finder", refId: hooks.refId ?? null });
-    queued = out.added.length; skippedQueued = out.skipped;
-    say("info", `Added ${queued} file(s) to Downloads${skippedQueued ? ` (${skippedQueued} already there)` : ""}.`);
-  }
+  if (input.download) startDownloads();
+  if (input.download && list.length) say("info", `Added ${queued} file(s) to Downloads${skippedQueued ? ` (${skippedQueued} already there)` : ""}.`);
   hooks.progress?.({ done: pages.length, total: pages.length, label: "Finished" });
   return { files: list, pages, probes, queued, skippedQueued, picker: input.picker };
 }

@@ -12,7 +12,7 @@ export const GET = handler(async (req) => {
   pumpDownloads();
   const d = getSettings().data;
   return {
-    items: listDownloads({ status: sp.get("status") ?? undefined, q: sp.get("q") ?? undefined, limit: Number(sp.get("limit") ?? 200) }),
+    items: listDownloads({ status: sp.get("status") ?? undefined, q: sp.get("q") ?? undefined, limit: Number(sp.get("limit") ?? 200), refId: sp.get("ref") ?? undefined }),
     counts: downloadCounts(), running: runningDownloads(), folder: downloadsRoot(), concurrency: d.downloadConcurrency, maxMb: d.maxDownloadMb,
   };
 });
