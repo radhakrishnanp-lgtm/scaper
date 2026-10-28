@@ -1,5 +1,6 @@
 "use client";
 
+import { AskAiButton } from "@/components/assistant";
 import { Suspense, use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -133,6 +134,7 @@ function ProductDetail({ id }: { id: string }) {
               {!p.enabled && <Badge>paused</Badge>}
             </div>
             <p className="mt-2 text-sm text-muted">{s.summary}</p>
+            <div className="mt-3"><AskAiButton variant="secondary" label="Ask AI about this product" session={{ key: `product:${id}`, name: p.title ?? hostOf(p.url), focus: { kind: "tracked product", id, title: `${p.title ?? p.url} (product ${id}; price_history and set_price_alert work on it)`, url: p.url } }} /></div>
             <div className="mt-3 max-w-sm"><ScoreBar score={s.verdict === "collecting" ? null : s.score} /></div>
             <p className="mt-3 flex flex-wrap items-center gap-x-3 text-xs text-muted">
               {p.rating !== null && <span className="inline-flex items-center gap-1"><Star className="size-3.5" />{p.rating}{p.review_count !== null && ` (${p.review_count.toLocaleString("en-IN")} reviews)`}</span>}

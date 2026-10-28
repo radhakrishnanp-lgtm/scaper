@@ -29,7 +29,7 @@ export const POST = handler(async (req) => {
     value = page.requestMs ?? null;
   } else {
     const mode = ["json", "feed", "sitemap"].includes(w.target.type) ? "fast" : w.target.type === "visual" ? "browser" : w.mode;
-    const page = await fetchPage(w.url, mode, { steps: mode === "browser" ? w.options.steps : undefined });
+    const page = await fetchPage(w.url, mode, { steps: mode === "browser" || mode === "auto" ? w.options.steps : undefined });
     const read = readTarget(page.html, page.finalUrl, w.target, page.text, w.ignoreLines, w.options);
     content = read.content; value = read.value; inStock = read.inStock;
     if (w.target.type === "feed") note = `${feedLines(page.html).length} feed item(s).`;

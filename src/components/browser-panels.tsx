@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bookmark as BookmarkIcon, Eraser, ExternalLink, History, Puzzle, Send, Sparkles, StickyNote, Trash2, Upload } from "lucide-react";
 import type { AgentRun } from "@/server/repo/agent";
 import type { Annotation, Bookmark, Extension, HistoryEntry } from "@/server/repo/browser";
-import { Turn } from "./agent-run";
+import { SendOrStop, STOP_WORDS, stopRun, Turn } from "./agent-run";
 import { ConfirmDialog } from "./dialog";
 import { useToast } from "./toast";
 import { Badge, Button, EmptyState, IconButton, Input, SearchInput, Switch, Textarea } from "./ui";
@@ -41,6 +41,8 @@ export function AskPanel({ hasNotes, open }: { hasNotes: number; open: boolean }
 
   const send = async (prompt = text) => {
     if (!prompt.trim()) return;
+    // Typing "stop" while it works stops it.
+    if (running) { if (last && STOP_WORDS.test(prompt)) { await stopRun(last).catch(() => undefined); setText(""); void reload(last); } return; }
     setSending(true);
     try {
       const r = await api<{ run: AgentRun }>("/api/browser/ask", { body: { prompt, model, followUpOf: lastRun && lastRun.status !== "running" ? lastRun.id : undefined } });
@@ -82,7 +84,7 @@ export function AskPanel({ hasNotes, open }: { hasNotes: number; open: boolean }
           </select>
           <div className="flex gap-2">
             {ids.length > 0 && <Button size="sm" variant="ghost" onClick={() => { setIds([]); setRuns({}); }}>New chat</Button>}
-            <Button size="sm" type="submit" icon={<Send className="size-4" />} loading={sending} disabled={running || !text.trim()}>{running ? "Working…" : "Ask"}</Button>
+            <SendOrStop running={running} runId={last} sending={sending} disabled={!text.trim()} label="Ask" icon={<Send className="size-4" />} onStopped={() => last && void reload(last)} />
           </div>
         </div>
       </form>

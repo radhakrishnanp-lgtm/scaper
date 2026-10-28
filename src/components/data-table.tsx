@@ -14,7 +14,7 @@ import { api, errorText } from "@/lib/api-client";
 import { Dialog } from "./dialog";
 import { Menu, Popover, type MenuItem } from "./menu";
 import { useToast } from "./toast";
-import { openAssistant } from "./assistant";
+import { openAssistant, type AssistantSession } from "./assistant";
 import { Badge, Button, Checkbox, IconButton, Input, KeyValue, SearchInput } from "./ui";
 
 const isUrl = (v: Cell) => typeof v === "string" && /^https?:\/\//.test(v);
@@ -172,10 +172,12 @@ const OVERSCAN = 12;
  * sort, pin, resize and hide, saved views, virtual scrolling for 100 000 rows, selection, copy and export,
  * and a row drawer with every field.
  */
-export function DataTable({ dataset, exportHref, fill, fileName = "data", compact, viewScope }: {
+export function DataTable({ dataset, exportHref, fill, fileName = "data", compact, viewScope, aiSession }: {
   dataset: Dataset; exportHref?: (format: "csv" | "json" | "xlsx" | "ndjson") => string; fill?: Record<string, number>; fileName?: string; compact?: boolean;
   /** Saves and loads named views (columns, widths, pins, filters, sort) under this key, e.g. "task:<id>". */
   viewScope?: string;
+  /** The AI chat session for this data; each data set gets its own. */
+  aiSession?: AssistantSession;
 }) {
   const toast = useToast();
   const [q, setQ] = useState("");
@@ -315,7 +317,7 @@ export function DataTable({ dataset, exportHref, fill, fileName = "data", compac
           {!compact && (
             <Button size="sm" variant="ghost" icon={<Sparkles className="size-4 text-accent" />} onClick={() => {
               const list = chosen();
-              openAssistant({ rows: { source: dataset.name, columns: dataset.columns.filter((c) => !hidden.has(c)), items: list } });
+              openAssistant({ rows: { source: dataset.name, columns: dataset.columns.filter((c) => !hidden.has(c)), items: list }, session: aiSession ?? { key: `data:${dataset.name}`, name: dataset.name } });
             }}>{selected.size ? `Ask AI about ${selected.size.toLocaleString("en-IN")}` : "Ask AI"}</Button>
           )}
           {viewScope && (

@@ -5,6 +5,7 @@ import { FetchError } from "../fetcher/errors";
 import { dispatcherFor } from "../fetcher/http";
 import { log } from "../log";
 import { audit } from "../repo/events";
+import { creditsUsedToday, recordFirecrawl, type FirecrawlKind } from "../repo/firecrawl-usage";
 import { getSettings } from "../repo/settings";
 
 /**
@@ -22,10 +23,30 @@ export const firecrawlReady = () => Boolean(getSettings().integrations.firecrawl
 
 const base = () => getSettings().integrations.firecrawlUrl.replace(/\/+$/, "");
 
-async function call<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<T> {
+/**
+ * Credits a call costs at Firecrawl's list prices: a page 1 (5 with AI JSON extraction), a site map 1,
+ * a search 2 per 10 results plus 1 per result read.
+ */
+export function creditCost(kind: FirecrawlKind, o: { json?: boolean; limit?: number; read?: boolean } = {}) {
+  if (kind === "scrape") return o.json ? 5 : 1;
+  if (kind === "map") return 1;
+  const n = o.limit ?? 5;
+  return 2 * Math.ceil(n / 10) + (o.read ? n : 0);
+}
+
+/** Stops before a call that would go over your daily credit limit. */
+export function checkBudget(credits: number) {
+  const cap = getSettings().integrations.firecrawlDailyCredits;
+  if (!cap) return;
+  const used = creditsUsedToday();
+  if (used + credits > cap) throw new IntegrationError("firecrawl", `Your daily Firecrawl limit of ${cap} credits is reached (${used} used today). Raise it in Integrations → Firecrawl, or load pages with Browser or Fast.`, 402);
+}
+
+async function call<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, opts: { signal?: AbortSignal; timeoutMs?: number; usage?: { kind: FirecrawlKind; credits: number } } = {}): Promise<T> {
   const s = getSettings();
   const key = s.integrations.firecrawlKey;
   if (!key) throw new IntegrationError("firecrawl", "Add your Firecrawl API key in Integrations → Firecrawl first.");
+  if (opts.usage) checkBudget(opts.usage.credits);
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? 120_000);
   let res;
   try {
@@ -52,6 +73,7 @@ async function call<T>(method: "GET" | "POST" | "DELETE", path: string, body?: u
       : `Firecrawl answered ${res.status}: ${detail}`;
     throw new IntegrationError("firecrawl", msg, res.status);
   }
+  if (opts.usage) recordFirecrawl(opts.usage.kind, opts.usage.credits);
   return json as T;
 }
 
@@ -80,7 +102,7 @@ export async function firecrawlScrape(url: string, opts: { signal?: AbortSignal;
     url, formats: opts.formats ?? ["rawHtml", "markdown", "links"], onlyMainContent: opts.onlyMainContent ?? false,
     ...(opts.waitFor ? { waitFor: opts.waitFor } : {}), ...(opts.mobile ? { mobile: true } : {}),
     timeout: getSettings().scraping.timeoutSeconds * 1000, blockAds: true,
-  }, { signal: opts.signal, timeoutMs: getSettings().scraping.timeoutSeconds * 1000 + 30_000 });
+  }, { signal: opts.signal, timeoutMs: getSettings().scraping.timeoutSeconds * 1000 + 30_000, usage: { kind: "scrape", credits: creditCost("scrape", { json: (opts.formats ?? []).some((f) => typeof f === "object") }) } });
   const parsed = pageSchema.safeParse(r.data);
   if (!parsed.success) throw new IntegrationError("firecrawl", "Firecrawl returned a page Scaper could not read.");
   const page = toPage(url, parsed.data);
@@ -92,10 +114,11 @@ export type SearchHit = { url: string; title: string; description: string; markd
 
 /** Web search through Firecrawl; with `read`, the top results come back as Markdown too. */
 export async function firecrawlSearch(query: string, opts: { limit?: number; read?: boolean; country?: string; signal?: AbortSignal } = {}): Promise<SearchHit[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 5, 1), 20);
   const r = await call<{ data?: unknown }>("POST", "/search", {
-    query: query.slice(0, 500), limit: Math.min(Math.max(opts.limit ?? 5, 1), 20), ...(opts.country ? { country: opts.country } : {}),
+    query: query.slice(0, 500), limit, ...(opts.country ? { country: opts.country } : {}),
     ...(opts.read ? { scrapeOptions: { formats: ["markdown"], onlyMainContent: true } } : {}),
-  }, { signal: opts.signal });
+  }, { signal: opts.signal, usage: { kind: "search", credits: creditCost("search", { limit, read: opts.read }) } });
   const data = r.data as { web?: unknown[] } | unknown[] | undefined;
   const items = Array.isArray(data) ? data : data?.web ?? [];
   audit("firecrawl.search", { results: items.length });
@@ -107,7 +130,7 @@ export async function firecrawlSearch(query: string, opts: { limit?: number; rea
 
 /** Every link Firecrawl finds on a site (from its sitemap and pages), optionally ranked by a search word. */
 export async function firecrawlMap(url: string, opts: { search?: string; limit?: number; signal?: AbortSignal } = {}) {
-  const r = await call<{ links?: unknown[] }>("POST", "/map", { url, ...(opts.search ? { search: opts.search } : {}), limit: Math.min(opts.limit ?? 500, 5000) }, { signal: opts.signal });
+  const r = await call<{ links?: unknown[] }>("POST", "/map", { url, ...(opts.search ? { search: opts.search } : {}), limit: Math.min(opts.limit ?? 500, 5000) }, { signal: opts.signal, usage: { kind: "map", credits: creditCost("map") } });
   return (r.links ?? []).map((x) => (typeof x === "string" ? { url: x, title: "" } : { url: String((x as { url?: string }).url ?? ""), title: String((x as { title?: string }).title ?? "") })).filter((l) => l.url);
 }
 

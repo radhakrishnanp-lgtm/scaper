@@ -90,9 +90,19 @@ export function enqueue(input: EnqueueInput): Job {
 }
 
 /** Enqueue and wait for the result (for "Run now" buttons). Resolves with the job as it stands at the timeout. */
-export async function enqueueAndWait(input: EnqueueInput, timeoutMs = 120_000): Promise<Job> {
+/** Runs a job and waits for it. When `signal` aborts (the AI was stopped), the job is cancelled too. */
+export async function enqueueAndWait(input: EnqueueInput, timeoutMs = 120_000, signal?: AbortSignal): Promise<Job> {
+  if (signal?.aborted) throw new Error("Stopped by you.");
   const job = enqueue({ priority: 10, ...input });
-  return waitForJob(job.id, timeoutMs);
+  const stop = () => { cancelJob(job.id); };
+  signal?.addEventListener("abort", stop, { once: true });
+  try {
+    const done = await waitForJob(job.id, timeoutMs);
+    if (signal?.aborted) throw new Error("Stopped by you.");
+    return done;
+  } finally {
+    signal?.removeEventListener("abort", stop);
+  }
 }
 
 export function waitForJob(id: string, timeoutMs: number): Promise<Job> {

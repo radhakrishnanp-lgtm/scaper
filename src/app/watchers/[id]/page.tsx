@@ -1,5 +1,6 @@
 "use client";
 
+import { AskAiButton } from "@/components/assistant";
 import { Suspense, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -193,6 +194,7 @@ function WatcherDetail({ id }: { id: string }) {
         description={<span className="inline-flex flex-wrap items-center gap-2"><StatusBadge status={w.last_status} enabled={w.enabled} failCount={w.fail_count} /><a href={w.url} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-accent hover:underline">{hostOf(w.url)}<ExternalLink className="size-3" /></a><span>· {info.label} · {rulesText(w)}</span>{w.tags.map((t) => <Badge key={t}>{t}</Badge>)}</span>}
         actions={<>
           <Button icon={<RefreshCw className="size-4" />} loading={busy === "check"} onClick={checkNow}>Check now</Button>
+          <AskAiButton session={{ key: `watcher:${id}`, name: w.name, focus: { kind: "watcher", id, title: `${w.name} (watcher ${id}; recent_changes and check_watcher work on it)`, url: w.url } }} />
           <Link prefetch={false} href={`/watchers/${id}/edit`}><Button variant="secondary" icon={<Pencil className="size-4" />}>Edit</Button></Link>
           <Menu label="More watcher actions" trigger={(p) => <IconButton {...p} label="More actions"><MoreHorizontal className="size-4" /></IconButton>} items={[
             { label: w.enabled ? "Pause" : "Resume", icon: w.enabled ? <Pause /> : <Play />, onSelect: () => void toggle() },

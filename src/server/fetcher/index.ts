@@ -6,7 +6,7 @@ import { browserGet } from "./browser";
 import type { InspectResult } from "./inspect-script";
 import { FetchError } from "./errors";
 import { httpGet } from "./http";
-import { firecrawlScrape, IntegrationError } from "../integrations/firecrawl";
+import { firecrawlReady, firecrawlScrape, IntegrationError } from "../integrations/firecrawl";
 import { assertPublicUrl } from "./network-guard";
 import { checkRobots, detectBotWall, hostBlockedFor, parseRetryAfter, penalize, reward, withHostTurn } from "./politeness";
 
@@ -83,6 +83,7 @@ export async function preflight(url: string, opts: { signal?: AbortSignal } = {}
 }
 
 export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions = {}): Promise<FetchedPage> {
+  if (mode === "auto") return fetchSmart(url, opts);
   const started = Date.now();
   const { s, host, rule, fastUa, browserUa, headers, guard, minDelayMs, notes } = await preflight(url, opts);
   const timeoutMs = s.timeoutSeconds * 1000;
@@ -143,4 +144,59 @@ export async function fetchPage(url: string, mode: FetchMode, opts: FetchOptions
       throw e;
     }
   });
+}
+
+/** Work that only a real browser can do (clicks, next-page clicks, screenshots), so Fast mode is skipped. */
+const needsBrowser = (o: FetchOptions) => Boolean(o.steps?.length || (o.pagination && o.pagination.type === "click") || o.screenshot || o.inspect || o.capture || o.scroll || o.evidence);
+
+/** True for an HTML page with (almost) no readable text: a JavaScript shell, or nothing loaded. */
+export function looksEmpty(html: string, contentType?: string | null) {
+  if (contentType && !/html|xml/i.test(contentType)) return false;
+  if (/<div id=["'](root|app|__next|__nuxt)["'][^>]*>\s*<\/div>/i.test(html) && html.length < 60_000) return true;
+  const text = html.replace(/<(script|style|noscript|template)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim();
+  if (text.length < 200 && /enable javascript|requires javascript|turn on javascript|javascript is (disabled|required)/i.test(html)) return true;
+  return text.length < 80;
+}
+
+/** Errors worth another way of loading: the network, a timeout, the browser, or a server error. Never a block or a rule. */
+const worthRetry = (e: unknown) => e instanceof FetchError
+  ? ["network", "timeout", "browser"].includes(e.code) || (e.code === "http" && (e.status ?? 0) >= 500 && e.status !== 503)
+  : !(e instanceof IntegrationError);
+
+/**
+ * Smart mode, cheapest first: Fast (free), then Scaper's browser (free), then Firecrawl (credits) only when the free
+ * ways failed for a technical reason or came back empty, and only with a key. Bot checks, 403/429 and robots.txt stop it.
+ */
+async function fetchSmart(url: string, opts: FetchOptions): Promise<FetchedPage> {
+  const started = Date.now();
+  const notes: string[] = [];
+  const order: FetchMode[] = needsBrowser(opts) ? ["browser"] : ["fast", "browser"];
+  let empty: FetchedPage | null = null;
+  let failure: unknown = null;
+  const done = (p: FetchedPage): FetchedPage => ({ ...p, durationMs: Date.now() - started, notes: [...notes, ...p.notes] });
+  for (const m of order) {
+    try {
+      const p = await fetchPage(url, m, opts);
+      if (!looksEmpty(p.html, p.contentType)) return done(p);
+      empty = p;
+      notes.push(m === "fast" ? "Smart mode: the plain page was empty (it needs JavaScript), so Scaper's browser loaded it." : "Smart mode: the page was still empty in Scaper's browser.");
+    } catch (e) {
+      if (!worthRetry(e)) throw e;
+      failure = e;
+      notes.push(`Smart mode: ${m === "fast" ? "Fast" : "Browser"} did not work (${(e as Error).message.slice(0, 120)}).`);
+    }
+  }
+  // Firecrawl cannot click or type, so pages that need page actions stay with the browser result.
+  if (firecrawlReady() && !opts.steps?.length && !(opts.pagination && opts.pagination.type === "click")) {
+    try {
+      const p = await fetchPage(url, "firecrawl", { signal: opts.signal, accept: opts.accept });
+      notes.push("Smart mode: loading it for free did not work, so Firecrawl loaded it (1 credit).");
+      return done(p);
+    } catch (e) {
+      notes.push(`Smart mode: Firecrawl did not work either (${(e as Error).message.slice(0, 120)}).`);
+      if (!empty) throw e;
+    }
+  }
+  if (empty) return done(empty);
+  throw failure ?? new FetchError("network", "The page could not be loaded.");
 }

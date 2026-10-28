@@ -219,7 +219,7 @@ export async function checkWatcher(w: Watcher, hooks: Hooks = {}): Promise<Check
       page = s.page; cur = s.read; statusCode = s.code; responseMs = s.ms;
     } else {
       page = await fetchPage(w.url, mode, {
-        steps: mode === "browser" ? o.steps : undefined,
+        steps: mode === "browser" || mode === "auto" ? o.steps : undefined,
         capture: wantShot ? { selector: visual && w.target.type === "visual" ? w.target.selector || undefined : undefined } : undefined,
         accept: ACCEPT[w.target.type],
         signal: hooks.signal,

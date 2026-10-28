@@ -70,7 +70,9 @@ function Downloads() {
   const [removing, setRemoving] = useState<DownloadRow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [findJob, setFindJob] = useQueryState<string>("find", "");
-  const findUrl = useSearchParams().get("findUrl") ?? "";
+  const search = useSearchParams();
+  const findUrl = search.get("findUrl") ?? "";
+  const findText = search.get("findText") ?? "";
   const [finding, setFinding] = useState(Boolean(findUrl));
   const finder = useApi<FinderInfo>("/api/files");
   const qs = new URLSearchParams({ ...(filter !== "all" ? { status: filter } : {}), ...(q.trim() ? { q: q.trim() } : {}) }).toString();
@@ -200,7 +202,7 @@ function Downloads() {
       {data && <p className="mt-4 text-xs text-muted">Files are saved in <Code>{data.folder}</Code>. Largest file: {data.maxMb.toLocaleString("en-IN")} MB; change it and how many download at once in Settings → Data.</p>}
 
       {adding && <AddDialog onClose={() => setAdding(false)} onAdded={() => void reload()} />}
-      {finding && finder.data && <FindFilesDialog initialUrl={findUrl} ready={finder.data.ready} onClose={() => setFinding(false)} onStarted={(id) => { setFindJob(id); void finder.reload(); }} />}
+      {finding && finder.data && <FindFilesDialog initialUrl={findUrl} initialInstruction={findText} ready={finder.data.ready} onClose={() => setFinding(false)} onStarted={(id) => { setFindJob(id); void finder.reload(); }} />}
       <ConfirmDialog open={clearing} onCancel={() => setClearing(false)} onConfirm={() => void clear()} title="Clear finished downloads?" confirmLabel="Clear"
         body="Removes done, failed and cancelled entries from this list. The files stay in the downloads folder." />
       <Dialog open={Boolean(removing)} onClose={() => setRemoving(null)} title={`Remove ${removing?.file_name ?? "download"}?`}

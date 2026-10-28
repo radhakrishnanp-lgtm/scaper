@@ -14,7 +14,7 @@ import { dateTime, timeAgo } from "@/lib/format";
 /** Pieces of an agent run (steps, approval card, one question and answer), shared by the agent and bot pages. */
 
 export const TOOL_LABEL: Record<string, string> = {
-  firecrawl_scrape: "Read page with Firecrawl", web_search: "Searched the web", firecrawl_map: "Listed site pages (Firecrawl)",
+  firecrawl_scrape: "Read page with Firecrawl", web_search: "Searched the web", firecrawl_map: "Listed site pages (Firecrawl)", firecrawl_usage: "Checked Firecrawl credits",
   apify_find_actor: "Searched Apify Store", apify_actor_input: "Read actor input", apify_run_actor: "Ran Apify actor", create_apify_task: "Created Apify task",
   download_files: "Queued downloads", find_files: "Found files on a site", check_links: "Checked links", update_watcher: "Changed watcher", set_price_alert: "Set price alert", list_deal_searches: "Listed deal searches", delete_deal_search: "Deleted deal search", list_alerts: "Read alerts", mark_alerts_read: "Marked alerts read", list_downloads: "Listed downloads", pause_run: "Paused run", resume_run: "Resumed run",
   live_browser_read: "Read your browser page", live_browser_observe: "Looked at your browser page", live_browser_act: "Acted in your browser",
@@ -117,8 +117,35 @@ export function ApprovalCard({ run, onAnswered, who = "The agent" }: { run: Agen
   );
 }
 
-/** One question and its answer; earlier turns of a conversation render compact. */
+/** What you can type into a chat to stop the AI while it works. */
+export const STOP_WORDS = /^\s*(stop|cancel|halt|abort)( it| now| please)?\s*[.!]*\s*$/i;
+
+/** Stops a running AI run; the model call, page load or job it is waiting on is cancelled too. */
+export async function stopRun(id: string) {
+  await api(`/api/agent/runs/${id}/stop`, { method: "POST" });
+}
+
+/** The send button of an AI chat; while the AI works it turns into Stop. */
+export function SendOrStop({ running, runId, sending, disabled, label = "Send", icon, onStopped }: { running: boolean; runId: string | null; sending?: boolean; disabled?: boolean; label?: string; icon?: React.ReactNode; onStopped?: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  if (running && runId) {
+    return (
+      <Button size="sm" type="button" variant="danger" icon={<Square className="size-3.5" />} loading={busy} aria-label="Stop the AI"
+        onClick={async () => { setBusy(true); try { await stopRun(runId); onStopped?.(); } catch (e) { toast.error("Could not stop", errorText(e)); } finally { setBusy(false); } }}>Stop</Button>
+    );
+  }
+  return <Button size="sm" type="submit" icon={icon} loading={sending} disabled={disabled}>{label}</Button>;
+}
+
+/** One question and its answer; earlier turns of a conversation render compact. A running turn always has a Stop button. */
 export function Turn({ run, compact, onStop, stopping, onAnswered, avatar, who, hidePrompt }: { run: AgentRun; compact?: boolean; onStop?: () => void; stopping?: boolean; onAnswered?: () => void; avatar?: React.ReactNode; who?: string; hidePrompt?: boolean }) {
+  const toast = useToast();
+  const [ownStop, setOwnStop] = useState(false);
+  const stop = onStop ?? (async () => {
+    setOwnStop(true);
+    try { await stopRun(run.id); onAnswered?.(); } catch (e) { toast.error("Could not stop", errorText(e)); } finally { setOwnStop(false); }
+  });
   const tools = run.steps.filter((s) => s.type === "tool");
   const failed = tools.filter((s) => s.type === "tool" && !s.ok).length;
   let n = 0;
@@ -139,7 +166,7 @@ export function Turn({ run, compact, onStop, stopping, onAnswered, avatar, who, 
             <span>{tools.length} tool call{tools.length === 1 ? "" : "s"}{failed ? ` (${failed} failed)` : ""}</span>
             <span>{(run.tokens_in + run.tokens_out).toLocaleString("en-IN")} tokens{run.cost ? ` · ${money(run.cost)}` : ""}</span>
             <time title={dateTime(run.created_at)}>{timeAgo(run.created_at)}</time>
-            {run.status === "running" && onStop && <Button size="sm" variant="secondary" icon={<Square className="size-3.5" />} loading={stopping} onClick={onStop}>Stop</Button>}
+            {run.status === "running" && <Button size="sm" variant="secondary" icon={<Square className="size-3.5" />} loading={stopping ?? ownStop} onClick={() => void stop()}>Stop</Button>}
           </div>
           {compact ? (
             tools.length > 0 && <details className="text-xs text-muted"><summary className="cursor-pointer">{tools.length === 1 ? "Show the step" : `Show the ${tools.length} steps`}</summary><div className="mt-2 space-y-1.5">{run.steps.map((s, i) => <StepView key={i} step={s} n={s.type === "tool" ? ++n : n} />)}</div></details>

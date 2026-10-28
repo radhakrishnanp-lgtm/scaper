@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, Copy, Crosshair, FileUp, Flame, FlaskConical, Globe, Plus, Puzzle, Save, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Crosshair, FileUp, Flame, FlaskConical, Globe, Plus, Puzzle, Save, Trash2, Wand2, X, Zap } from "lucide-react";
 import type { Task } from "@/server/repo/scrapes";
 import { compilePatterns, matchesAny, parseUrlList } from "@/server/tasks/urls";
 import { taskSchema, type FetchMode, type NotifyChannels, type TaskOptions } from "@/lib/schemas";
@@ -255,11 +255,12 @@ export function TaskEditor({ id, initial }: { id?: string; initial: TaskDraft })
               ) : (
                 <Section title="How to load pages">
                   <Segmented label="Fetch mode" value={d.mode} onChange={(v) => set("mode", v)} options={[
+                    { value: "auto", label: "Smart", icon: <Wand2 className="size-4" /> },
                     { value: "browser", label: "Browser", icon: <Globe className="size-4" /> },
                     { value: "fast", label: "Fast", icon: <Zap className="size-4" /> },
                     { value: "firecrawl", label: "Firecrawl", icon: <Flame className="size-4" /> },
                   ]} />
-                  <p className="text-xs text-muted">{d.mode === "browser" ? "A real Chromium runs the page's JavaScript. Needed for page actions, Next buttons, Load more and infinite scroll." : d.mode === "fast" ? "Plain HTTP without JavaScript: 5–20× faster and lighter. Works for most server-rendered sites, feeds and APIs." : "Your Firecrawl account loads each page in its browsers; Scaper reads it with your selectors, Auto or your own AI. Costs Firecrawl credits per page; page actions need Browser mode."}</p>
+                  <p className="text-xs text-muted">{d.mode === "auto" ? "The cheapest way that works, page by page: plain HTTP first, Scaper's browser when a page needs JavaScript (or when the task clicks or scrolls), and Firecrawl only when both fail and a key is saved. A site that blocks bots is never retried through Firecrawl." : d.mode === "browser" ? "A real Chromium runs the page's JavaScript. Needed for page actions, Next buttons, Load more and infinite scroll." : d.mode === "fast" ? "Plain HTTP without JavaScript: 5–20× faster and lighter. Works for most server-rendered sites, feeds and APIs." : "Your Firecrawl account loads each page in its browsers; Scaper reads it with your selectors, Auto or your own AI. Costs Firecrawl credits per page; page actions need Browser mode."}</p>
                   {d.mode === "firecrawl" && services.data && !services.data.firecrawl.configured && <Callout tone="warning" title="Add your Firecrawl key first">Open <Link prefetch={false} href="/integrations?tab=firecrawl" className="text-accent hover:underline">Integrations → Firecrawl</Link> and paste your API key.</Callout>}
                 </Section>
               )}

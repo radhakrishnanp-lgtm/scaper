@@ -111,6 +111,9 @@ export function ScrapeResultView({ run, onUseSelectors, actions }: {
             <DataTable
               key={`${run.id}-${tab}`}
               dataset={ds}
+              aiSession={run.recipe_id
+                ? { key: `task:${run.recipe_id}`, name: `Task data · ${hostOf(run.url)}`, focus: { kind: "task run", id: run.id, title: `Rows of run ${run.id} on ${hostOf(run.url)}; get_run_rows reads them`, url: run.url } }
+                : { key: `run:${run.id}`, name: `${ds.name} · ${hostOf(run.url)}`, focus: { kind: "scrape run", id: run.id, title: `Rows of run ${run.id} on ${hostOf(run.url)}; get_run_rows reads them`, url: run.url } }}
               viewScope={run.recipe_id ? `task:${run.recipe_id}:${ds.name.replace(/[^\w.-]+/g, "_").slice(0, 60)}` : undefined}
               fill={tab === 0 || ds === r.datasets[0] ? r.quality?.fill : undefined}
               exportHref={(f) => `/api/runs/${run.id}/export?format=${f}&dataset=${tab}`}

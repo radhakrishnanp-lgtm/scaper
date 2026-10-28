@@ -29,7 +29,8 @@ import { expectedRange } from "../ops/diagnose";
 import { queueHeal } from "../ops/heal";
 import { getSettings } from "../repo/settings";
 import type { AgentBrowser } from "./browser-session";
-import { type ModelChoice, type ToolDef } from "./client";
+import { resolveModel, type ModelChoice, type ToolDef } from "./client";
+import { firecrawlReady } from "../integrations/firecrawl";
 import { buildPageContext, linkLines } from "./context";
 import { candidateLinks, planCategoryScrape } from "./crawl";
 import { checkScrape, scoreLinks } from "./judge";
@@ -255,7 +256,7 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
   return {
     firecrawl_scrape: {
       group: "Firecrawl & Apify", changes: false,
-      def: def("firecrawl_scrape", "Load a page through the user's Firecrawl account and read it as Markdown with numbered links. Use when read_page fails on a page that needs a real browser, or the user asks for Firecrawl. Costs one Firecrawl credit.", {
+      def: def("firecrawl_scrape", "Load a page through the user's Firecrawl account and read it as Markdown with numbered links. Costs 1 credit per page, so use it only after read_page (free) failed or came back empty, or when the user asks for Firecrawl. Never use it on a site that blocked Scaper: Firecrawl is not a way around a block. Daily limit: firecrawl_usage.", {
         url: str("Absolute http(s) URL"), focus: { type: "string", enum: ["main", "full"], description: "main (default) or full" },
       }, ["url"]),
       run: async (a, ctx) => {
@@ -266,7 +267,7 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
     },
     web_search: {
       group: "Firecrawl & Apify", changes: false,
-      def: def("web_search", "Search the web with the user's Firecrawl account. Returns titles, links and snippets; read=true also returns the top pages as Markdown. Use to find pages to scrape, not as a source of truth on its own.", {
+      def: def("web_search", "Search the web with the user's Firecrawl account. Returns titles, links and snippets; read=true also returns the top pages as Markdown. Costs 2 credits per 10 results, plus 1 per page read. Use to find pages to scrape, not as a source of truth on its own.", {
         query: str("What to search for. site:example.com limits it to one site."), limit: num("Results, 1-10 (default 5)"), read: bool("Also read the result pages (more credits)"),
         country: str("Two-letter country code, e.g. IN"),
       }, ["query"]),
@@ -278,7 +279,7 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
     },
     firecrawl_map: {
       group: "Firecrawl & Apify", changes: false,
-      def: def("firecrawl_map", "List a website's pages through Firecrawl (from its sitemap and links), optionally ranked by a word such as 'laptops'. Use to find category or product pages on a large site.", {
+      def: def("firecrawl_map", "List a website's pages and files through Firecrawl (from its sitemap and links), optionally ranked by a word such as 'laptops'. About 1 credit for up to 500 links, so it is the cheapest way to see a whole site: use it first to find category pages, item pages or file links (filter by file ending), then read only the pages you need. For downloading, find_files with site_map=true does this for you.", {
         url: str("The site, e.g. https://www.example.com"), search: str("Optional word to rank links by"), limit: num("Links, up to 500 (default 100)"),
       }, ["url"]),
       run: async (a, ctx) => {
@@ -288,6 +289,17 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
         const { firecrawlMap } = await import("../integrations/firecrawl");
         const links = await firecrawlMap(url, { search: a.search ? String(a.search).slice(0, 100) : undefined, limit: Math.min(Number(a.limit) || 100, 500), signal: ctx.signal });
         return j({ count: links.length, links: links.slice(0, 200) });
+      },
+    },
+    firecrawl_usage: {
+      group: "Firecrawl & Apify", changes: false,
+      def: def("firecrawl_usage", "How many Firecrawl credits Scaper used today and in the last 30 days, the user's daily limit, and (when the account allows) the credits left. Check it before a big Firecrawl job and tell the user what it will cost.", {}, []),
+      run: async () => {
+        const { firecrawlUsage } = await import("../repo/firecrawl-usage");
+        const { firecrawlCredits } = await import("../integrations/firecrawl");
+        const limit = getSettings().integrations.firecrawlDailyCredits;
+        const used = firecrawlUsage();
+        return j({ ...used, daily_limit: limit || "none", left_today: limit ? Math.max(0, limit - used.today.credits) : undefined, account_credits_left: await firecrawlCredits().catch(() => null), prices: "scrape 1 (5 with AI JSON), map 1, search 2 per 10 results + 1 per page read" });
       },
     },
     apify_find_actor: {
@@ -373,23 +385,24 @@ function SERVICE_TOOLS(): Record<string, AgentTool> {
         urls: { type: "array", items: { type: "string" }, description: "Start pages: a list of files, or many item pages at once (up to 200, for example the links in rows the user selected)" },
         kinds: { type: "array", items: { type: "string", enum: ["pdf", "ebook", "image", "video", "audio", "document", "archive"] }, description: "Kinds of file. Default pdf and ebook" },
         extensions: { type: "array", items: { type: "string" }, description: "Other file endings, like srt or psd" },
-        instruction: str("What to look for, in the user's words, for the ai or firecrawl picker"),
-        picker: { type: "string", enum: ["rules", "ai", "firecrawl"] },
+        instruction: str("What to look for, in the user's words, for the ai, auto or firecrawl picker"),
+        picker: { type: "string", enum: ["auto", "rules", "ai", "firecrawl"], description: "auto (default when an AI model is set): rules first, the fast model only on pages where rules find nothing. firecrawl costs 5 credits per page; use it only when the user asks or the free ways found nothing" },
+        site_map: bool("Also list the whole site with one Firecrawl map call (about 1 credit) and keep the file links. Good for big sites; needs a Firecrawl key"),
         depth: { type: "number", description: "Hops from the list to the file: 1 when each item has its own page with the download link (default), 2 when there is one more page" },
         max_pages: { type: "number", description: "Pages to open, default 40" },
-        mode: { type: "string", enum: ["fast", "browser", "firecrawl"], description: "How to load pages; browser for sites that need JavaScript" },
+        mode: { type: "string", enum: ["auto", "fast", "browser", "firecrawl"], description: "How to load pages. auto (default): free first, Firecrawl only when free loading fails. browser for sites that need JavaScript" },
       }, ["urls"]),
-      run: async (a) => {
+      run: async (a, ctx) => {
         const { fileFinderSchema } = await import("@/lib/schemas");
         const arr = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).map(String) : undefined);
         const input = fileFinderSchema.parse({
           urls: arr(a.urls)?.slice(0, 200), kinds: arr(a.kinds), extensions: arr(a.extensions), instruction: a.instruction ? String(a.instruction) : undefined,
-          picker: a.picker ?? undefined, depth: a.depth != null ? Number(a.depth) : undefined,
+          picker: a.picker ?? (resolveModel("fast") ? "auto" : undefined), siteMap: a.site_map === true && firecrawlReady(), depth: a.depth != null ? Number(a.depth) : undefined,
           // Each start page counts as a page, so many item pages get room to be read.
           maxPages: Math.min(500, a.max_pages != null ? Number(a.max_pages) : Math.max(40, (arr(a.urls)?.length ?? 0) * 2)),
           mode: a.mode ?? undefined, download: false,
         });
-        const job = await enqueueAndWait({ kind: "files", title: `Find files on ${new URL(input.urls[0]!).hostname}`, trigger: "agent", input: input as unknown as Record<string, unknown> }, 300_000);
+        const job = await enqueueAndWait({ kind: "files", title: `Find files on ${new URL(input.urls[0]!).hostname}`, trigger: "agent", input: input as unknown as Record<string, unknown> }, 300_000, ctx.signal);
         const r = (job.result ?? {}) as { files?: { url: string; name: string; kind: string; from: string; size: number | null }[]; pages?: { url: string; error?: string }[] };
         if (job.status !== "succeeded" && !r.files?.length) throw new Error(job.error ?? "The file search did not finish.");
         return j({
@@ -639,9 +652,9 @@ export const TOOLS: Record<string, AgentTool> = {
   run_task: {
     group: "Tasks & data", changes: false,
     def: def("run_task", "Run one of the user's saved tasks now and return a summary of the rows. Only when the user asks to run it.", { task: str("Task id or exact name") }, ["task"]),
-    run: async (a) => {
+    run: async (a, ctx) => {
       const task = findTask(a.task);
-      const job = await enqueueAndWait({ kind: "task", refId: task.id, title: `Task: ${task.name}`, trigger: "agent", input: { taskId: task.id }, unique: true }, 240_000);
+      const job = await enqueueAndWait({ kind: "task", refId: task.id, title: `Task: ${task.name}`, trigger: "agent", input: { taskId: task.id }, unique: true }, 240_000, ctx.signal);
       const runId = (job.result as { runId?: string } | null)?.runId;
       const run = runId ? getRun(runId) : null;
       const ds = run?.result?.datasets?.[mainDatasetIndex(run.result.datasets)];
@@ -765,9 +778,9 @@ export const TOOLS: Record<string, AgentTool> = {
   check_watcher: {
     group: "Watchers", changes: false,
     def: def("check_watcher", "Check a watcher now and report whether the page changed.", { watcher: str("Watcher id or name") }, ["watcher"]),
-    run: async (a) => {
+    run: async (a, ctx) => {
       const w = findWatcher(a.watcher);
-      const job = await enqueueAndWait({ kind: "watch", refId: w.id, title: `Check: ${w.name}`, trigger: "agent", input: { watcherId: w.id }, unique: true }, 120_000);
+      const job = await enqueueAndWait({ kind: "watch", refId: w.id, title: `Check: ${w.name}`, trigger: "agent", input: { watcherId: w.id }, unique: true }, 120_000, ctx.signal);
       return j({ status: job.status, result: job.result, error: job.error });
     },
   },
@@ -1149,7 +1162,7 @@ export const BOT_ONLY_TOOLS = new Set(["bot_memory_read", "bot_memory_write", "b
 /** Bots cannot create, change, start or delete bots, so one bot can never set off another in a loop. */
 export const NOT_FOR_BOTS = new Set(["create_bot", "update_bot", "run_bot", "delete_bot"]);
 
-const FIRECRAWL_TOOLS = new Set(["firecrawl_scrape", "web_search", "firecrawl_map"]);
+const FIRECRAWL_TOOLS = new Set(["firecrawl_scrape", "web_search", "firecrawl_map", "firecrawl_usage"]);
 const APIFY_TOOLS = new Set(["apify_find_actor", "apify_actor_input", "apify_run_actor", "create_apify_task"]);
 /** Firecrawl and Apify tools are only offered once their key is saved in Integrations. */
 export function serviceToolAvailable(name: string) {

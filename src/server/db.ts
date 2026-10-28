@@ -769,6 +769,20 @@ CREATE TABLE browser_annotations (
 CREATE INDEX idx_browser_annotations_url ON browser_annotations(url, created_at);
 `,
   },
+  {
+    id: 12,
+    name: "firecrawl credit counter",
+    sql: `
+-- Firecrawl calls and the credits they cost (Firecrawl's list prices), per day and kind, so you can see and cap what is used.
+CREATE TABLE firecrawl_usage (
+  day TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  credits INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, kind)
+);
+`,
+  },
 ];
 
 function migrate(db: Database.Database, upTo = Infinity) {

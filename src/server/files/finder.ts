@@ -4,7 +4,7 @@ import { FILE_KINDS, type FileFinderInput } from "@/lib/schemas";
 import { chat, parseJsonReply, resolveModel } from "../ai/client";
 import { fetchPage, FetchError, preflight } from "../fetcher";
 import { withHostTurn } from "../fetcher/politeness";
-import { firecrawlReady, firecrawlScrape } from "../integrations/firecrawl";
+import { firecrawlMap, firecrawlReady, firecrawlScrape } from "../integrations/firecrawl";
 import { probeFile, queueDownloads } from "../downloads/manager";
 
 /**
@@ -168,7 +168,9 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
   const wanted = wantedExtensions(input);
   if (!wanted.size) throw new FetchError("step", "Pick at least one kind of file, or add a file ending.");
   if (input.picker === "ai" && !resolveModel("fast")) throw new FetchError("step", "Connect an AI model in Settings → AI to let your AI pick the links, or use Scaper's rules.");
-  if (input.picker === "firecrawl" && !firecrawlReady()) throw new FetchError("step", "Add your Firecrawl key in Integrations → Firecrawl to let Firecrawl pick the links.");
+  if ((input.picker === "firecrawl" || input.siteMap) && !firecrawlReady()) throw new FetchError("step", "Add your Firecrawl key in Integrations → Firecrawl to use Firecrawl.");
+  // Auto: the rules, and your AI only where they find nothing (when a model is connected).
+  const aiFallback = input.picker === "auto" && Boolean(resolveModel("fast"));
   const say = hooks.log ?? (() => undefined);
   const files = new Map<string, FoundFile>();
   const pages: VisitedPage[] = [];
@@ -186,8 +188,32 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
   };
   const allowedSite = (u: string) => !input.sameSite || starts.some((s) => sameSite(s, u));
 
+  // One Firecrawl map call lists the whole site (about 1 credit), so file links come without opening every page.
+  if (input.siteMap) {
+    const hosts = new Map<string, string>();
+    for (const u of starts) { const h = new URL(u).hostname; if (!hosts.has(h)) hosts.set(h, u); }
+    for (const start of [...hosts.values()].slice(0, 3)) {
+      if (hooks.signal?.aborted) break;
+      try {
+        await preflight(start, { signal: hooks.signal });
+        const links = await firecrawlMap(start, { limit: 5000, signal: hooks.signal });
+        let n = 0;
+        for (const l of links) {
+          const ext = extOf(l.url);
+          const kind = wanted.get(ext);
+          if (kind && allowedSite(l.url) && addFile(l.url, ext, kind, `${new URL(start).origin} (site map)`, l.title)) n++;
+        }
+        say("info", `Firecrawl's site map of ${new URL(start).hostname}: ${links.length} link(s), ${n} wanted file(s). About 1 credit.`);
+      } catch (e) {
+        if (hooks.signal?.aborted) break;
+        say("warn", `Firecrawl site map of ${start}: ${(e as Error).message}`);
+      }
+    }
+  }
+
   while (queue.length && pages.length < input.maxPages && files.size < input.maxFiles) {
-    if (hooks.signal?.aborted) throw new FetchError("cancelled", "Cancelled.");
+    // Stopped: keep what was found so far.
+    if (hooks.signal?.aborted) break;
     const item = queue.shift()!;
     if (seen.has(item.url)) continue;
     seen.add(item.url);
@@ -212,6 +238,11 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
       for (const u of extra) if (!links.some((l) => l.href === u)) { try { links.push({ href: new URL(u, finalUrl).toString(), text: "", download: false, rel: "", area: "main" }); } catch { /* skip */ } }
       const depthLeft = input.depth - item.depth;
       if (input.picker === "ai") choice = await aiPick(links, finalUrl, title, input, wanted, depthLeft, hooks);
+      else if (aiFallback && !links.some((l) => wanted.has(extOf(l.href))) && (depthLeft === 0 || !links.some((l) => ruleScore(l, finalUrl) >= 2))) {
+        // The rules see no file and nothing to follow here: let your AI read this page's links.
+        choice = await aiPick(links, finalUrl, title, input, wanted, depthLeft, hooks);
+        say("info", `${finalUrl}: no file links by the rules, so your AI read the page.`);
+      }
       // Firecrawl's AI can name links that are not plain anchors (buttons, scripts); keep them too.
       for (const u of [...(choice?.files ?? []), ...(choice?.follow ?? [])]) if (!links.some((l) => l.href === u)) links.push({ href: u, text: "", download: false, rel: "", area: "main" });
 
@@ -260,7 +291,8 @@ export async function findFiles(input: FileFinderInput, hooks: Hooks = {}): Prom
       visit.files = files.size - before;
       say("info", `${finalUrl}: ${visit.files} file(s), ${fresh.length} page(s) to open${item.depth ? ` (${item.depth} hop${item.depth > 1 ? "s" : ""} from the start)` : ""}.`);
     } catch (e) {
-      if (e instanceof FetchError && e.code === "cancelled") throw e;
+      // Stopped: keep what was found so far.
+      if (hooks.signal?.aborted || (e instanceof FetchError && e.code === "cancelled")) break;
       visit.error = (e as Error).message.slice(0, 300);
       say("warn", `${item.url}: ${visit.error}`);
       // A refused start page stops everything; a refused item page is just skipped.

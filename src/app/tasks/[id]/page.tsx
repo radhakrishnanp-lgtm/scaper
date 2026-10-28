@@ -1,5 +1,6 @@
 "use client";
 
+import { AskAiButton } from "@/components/assistant";
 import { Suspense, use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -101,6 +102,7 @@ function TaskDetail({ id }: { id: string }) {
         description={<><a href={t.url} target="_blank" rel="noreferrer noopener" className="text-accent hover:underline">{hostOf(t.url)}</a> · {t.mode} · {scheduleText(t.schedule_minutes, t.cron)}{t.tags.map((x) => <Badge key={x} className="ml-1.5">{x}</Badge>)}</>}
         actions={<>
           <Button icon={<Play className="size-4" />} loading={busy === "run"} disabled={Boolean(running)} onClick={runNow}>{running ? "Running…" : "Run now"}</Button>
+          <AskAiButton session={{ key: `task:${id}`, name: t.name, focus: { kind: "task", id, title: `${t.name} (task ${id}; list_runs and get_run_rows read its data)`, url: t.url } }} />
           <Link prefetch={false} href={`/tasks/${id}/edit`}><Button variant="secondary" icon={<Pencil className="size-4" />}>Edit</Button></Link>
           <Menu label="More task actions" trigger={(p) => <IconButton {...p} label="More actions"><MoreHorizontal className="size-4" /></IconButton>} items={[
             ...(t.extract.type === "selectors" ? [{ label: "Fix selectors with AI", icon: <Sparkles />, onSelect: () => setHeal(true) }] : []),

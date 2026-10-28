@@ -203,7 +203,7 @@ export function PaginationField({ value, onChange, mode }: { value: Pagination; 
           </div>
         )}
       </div>
-      {browserOnly && mode === "fast" && <p className="text-xs text-warning">This needs Browser mode. Fast mode cannot click or scroll.</p>}
+      {browserOnly && (mode === "fast" || mode === "firecrawl") && <p className="text-xs text-warning">This needs Browser mode. Fast mode cannot click or scroll.</p>}
     </div>
   );
 }

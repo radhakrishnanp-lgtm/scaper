@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Copy, Download, FileSearch, FileText, Loader2, X } from "lucide-react";
+import { Copy, Download, FileSearch, FileText, Loader2, Square, X } from "lucide-react";
 import type { Job } from "@/server/repo/jobs";
 import type { FinderResult } from "@/server/files/finder";
 import { Dialog } from "@/components/dialog";
@@ -19,14 +19,15 @@ const KINDS = [
 ] as const;
 
 /** The form: where to start, which files, and who picks the links. */
-export function FindFilesDialog({ initialUrl = "", ready, onClose, onStarted }: { initialUrl?: string; ready: FinderInfo["ready"]; onClose: () => void; onStarted: (jobId: string) => void }) {
+export function FindFilesDialog({ initialUrl = "", initialInstruction = "", ready, onClose, onStarted }: { initialUrl?: string; initialInstruction?: string; ready: FinderInfo["ready"]; onClose: () => void; onStarted: (jobId: string) => void }) {
   const toast = useToast();
   const [urls, setUrls] = useState(initialUrl);
   const [kinds, setKinds] = useState<string[]>(["pdf", "ebook"]);
   const [extensions, setExtensions] = useState("");
-  const [instruction, setInstruction] = useState("");
-  const [picker, setPicker] = useState<"rules" | "ai" | "firecrawl">("rules");
-  const [mode, setMode] = useState<"fast" | "browser" | "firecrawl">("fast");
+  const [instruction, setInstruction] = useState(initialInstruction);
+  const [picker, setPicker] = useState<"rules" | "ai" | "firecrawl" | "auto">(ready.ai ? "auto" : "rules");
+  const [mode, setMode] = useState<"fast" | "browser" | "firecrawl" | "auto">("auto");
+  const [siteMap, setSiteMap] = useState(false);
   const [depth, setDepth] = useState<"0" | "1" | "2">("1");
   const [maxPages, setMaxPages] = useState("40");
   const [followNext, setFollowNext] = useState(true);
@@ -40,7 +41,7 @@ export function FindFilesDialog({ initialUrl = "", ready, onClose, onStarted }: 
     setBusy(true);
     try {
       const r = await api<{ job: Job }>("/api/files", { body: {
-        urls: list, kinds, extensions: exts, instruction, picker, mode, depth: Number(depth), maxPages: Number(maxPages) || 40, followNext, sameSite, download, folder,
+        urls: list, kinds, extensions: exts, instruction, picker, mode, siteMap: siteMap && ready.firecrawl, depth: Number(depth), maxPages: Number(maxPages) || 40, followNext, sameSite, download, folder,
       } });
       toast.success("Looking for files", "Results appear below as pages are read.");
       onStarted(r.job.id); onClose();
@@ -54,7 +55,9 @@ export function FindFilesDialog({ initialUrl = "", ready, onClose, onStarted }: 
       <div className="space-y-5">
         <Field label="Start pages" hint="The page that lists the files, one per line.">{(p) => <Textarea {...p} rows={2} className="font-mono text-xs" value={urls} onChange={(e) => setUrls(e.target.value)} placeholder="https://example.com/library/pdfs" />}</Field>
         <div>
-          <div className="mb-2 text-sm font-medium">Files to find</div>
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium">Files to find
+            <button type="button" className="text-xs font-normal text-accent hover:underline" onClick={() => setKinds(kinds.length === KINDS.length ? ["pdf"] : KINDS.map((k) => k.value))}>{kinds.length === KINDS.length ? "Fewer" : "Any file"}</button>
+          </div>
           <div className="grid gap-1 sm:grid-cols-2">{KINDS.map((k) => <Checkbox key={k.value} checked={kinds.includes(k.value)} onChange={() => toggle(k.value)} label={k.label} />)}</div>
           <Field className="mt-3" label="Other file endings (optional)" hint="Separated by commas, like srt, psd, cbz.">{(p) => <Input {...p} value={extensions} onChange={(e) => setExtensions(e.target.value)} placeholder="srt, psd" />}</Field>
         </div>
@@ -63,18 +66,20 @@ export function FindFilesDialog({ initialUrl = "", ready, onClose, onStarted }: 
             { value: "0", label: "On this page" }, { value: "1", label: "On each item's page" }, { value: "2", label: "One more page after that" },
           ]} />
         )}</Field>
-        <Field label="Who picks the links" hint={picker === "rules" ? "Scaper's rules: file endings, download buttons and item pages below the list." : picker === "ai" ? "Your fast model reads each page's links with your instruction. Every call is in the AI log." : "Firecrawl loads each page and its AI answers your instruction with the file links. Uses Firecrawl credits."}>{() => (
+        <Field label="Who picks the links" hint={picker === "auto" ? "Scaper's rules first; your AI reads a page only where the rules find nothing. Fewest AI calls, no Firecrawl credits." : picker === "rules" ? "Scaper's rules: file endings, download buttons and item pages below the list." : picker === "ai" ? "Your fast model reads each page's links with your instruction. Every call is in the AI log." : "Firecrawl loads each page and its AI answers your instruction with the file links. Uses Firecrawl credits."}>{() => (
           <Segmented label="Who picks the links" value={picker} onChange={setPicker} options={[
-            { value: "rules", label: "Scaper's rules" }, ...(ready.ai ? [{ value: "ai" as const, label: "Your AI" }] : []), ...(ready.firecrawl ? [{ value: "firecrawl" as const, label: "Firecrawl AI" }] : []),
+            ...(ready.ai ? [{ value: "auto" as const, label: "Smart (rules + AI)" }] : []), { value: "rules", label: "Scaper's rules" }, ...(ready.ai ? [{ value: "ai" as const, label: "Your AI" }] : []), ...(ready.firecrawl ? [{ value: "firecrawl" as const, label: "Firecrawl AI" }] : []),
           ]} />
         )}</Field>
         {!ready.ai && !ready.firecrawl && <p className="-mt-3 text-xs text-muted">Connect a model in Settings → AI, or a Firecrawl key in Integrations, to pick links with an instruction.</p>}
-        {picker !== "rules" && <Field label="Instruction" hint="In your words. Page text is never treated as instructions.">{(p) => <Textarea {...p} rows={2} value={instruction} onChange={(e) => setInstruction(e.target.value)} placeholder="Download every chapter PDF and the EPUB of each book, not the sample previews" />}</Field>}
+        {picker !== "rules" && picker !== "auto" && <Field label="Instruction" hint="In your words. Page text is never treated as instructions.">{(p) => <Textarea {...p} rows={2} value={instruction} onChange={(e) => setInstruction(e.target.value)} placeholder="Download every chapter PDF and the EPUB of each book, not the sample previews" />}</Field>}
         {picker !== "firecrawl" && <Field label="Load pages with">{() => (
           <Segmented label="Load pages with" value={mode} onChange={setMode} options={[
-            { value: "fast", label: "Fast (HTML)" }, { value: "browser", label: "Browser (JavaScript sites)" }, ...(ready.firecrawl ? [{ value: "firecrawl" as const, label: "Firecrawl" }] : []),
+            { value: "auto", label: "Smart (free first)" }, { value: "fast", label: "Fast (HTML)" }, { value: "browser", label: "Browser (JavaScript sites)" }, ...(ready.firecrawl ? [{ value: "firecrawl" as const, label: "Firecrawl" }] : []),
           ]} />
         )}</Field>}
+        {picker === "auto" && <Field label="Instruction (optional)" hint="Used when your AI reads a page. In your words; page text is never treated as instructions.">{(p) => <Textarea {...p} rows={2} value={instruction} onChange={(e) => setInstruction(e.target.value)} placeholder="Every chapter PDF, not the sample previews" />}</Field>}
+        {ready.firecrawl && <Switch checked={siteMap} onChange={setSiteMap} label="Also list the whole site with Firecrawl (about 1 credit)" description="One Firecrawl map call returns the site's links; Scaper keeps the file links among them. Cheaper than opening many pages through Firecrawl." />}
         <div className="grid gap-x-6 sm:grid-cols-2">
           <Switch checked={followNext} onChange={setFollowNext} label="Follow next pages of the list" />
           <Switch checked={sameSite} onChange={setSameSite} label="Stay on this site" description="Files on other hosts (like a CDN) are still kept." />
@@ -112,6 +117,7 @@ export function FinderResults({ jobId, onClose, onQueued }: { jobId: string; onC
   const [off, setOff] = useState<Set<string>>(new Set());
   const [folder, setFolder] = useState("");
   const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const chosen = files.filter((f) => !off.has(f.url));
   const queue = async () => {
     setBusy(true);
@@ -123,20 +129,28 @@ export function FinderResults({ jobId, onClose, onQueued }: { jobId: string; onC
   };
   const host = (() => { try { return new URL(String((job?.input.urls as string[] | undefined)?.[0] ?? "")).hostname; } catch { return "site"; } })();
   const failedPages = (result?.pages ?? []).filter((p) => p.error);
+  const stop = async () => {
+    if (!job) return;
+    setStopping(true);
+    try { await api(`/api/jobs/${job.id}/cancel`, { method: "POST" }); reload(); } catch (e) { toast.error("Could not stop", errorText(e)); } finally { setStopping(false); }
+  };
   return (
     <section aria-label="Found files" className="mb-6 rounded-[var(--radius-card)] border border-border bg-surface p-4 shadow-card">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FileSearch className="size-4 text-accent" />
         <h2 className="font-semibold">{job?.title ?? "Finding files"}</h2>
         {job && <Badge tone={job.status === "succeeded" ? "success" : job.status === "failed" ? "danger" : "accent"}>{running ? "searching" : job.status === "succeeded" ? plural(files.length, "file") : job.status}</Badge>}
-        {result && <span className="text-xs text-muted">{plural(result.pages.length, "page")} read{result.probes ? `, ${result.probes} links checked` : ""}{result.picker !== "rules" ? `, picked by ${result.picker === "ai" ? "your AI" : "Firecrawl"}` : ""}</span>}
+        {result && <span className="text-xs text-muted">{plural(result.pages.length, "page")} read{result.probes ? `, ${result.probes} links checked` : ""}{result.picker !== "rules" ? `, picked by ${result.picker === "ai" ? "your AI" : result.picker === "auto" ? "rules and your AI" : "Firecrawl"}` : ""}</span>}
         <span className="flex-1" />
         <button type="button" aria-label="Close results" className="rounded p-1 text-muted hover:bg-surface-2" onClick={onClose}><X className="size-4" /></button>
       </div>
       {running && (
         <div className="space-y-2">
           <Progress value={job?.progress.total ? ((job.progress.done ?? 0) / job.progress.total) * 100 : null} label="Pages read" />
-          <p className="flex items-center gap-2 truncate text-xs text-muted"><Loader2 className="size-3 animate-spin" />{job?.progress.label || "Starting…"}</p>
+          <div className="flex items-center gap-2">
+            <p className="flex min-w-0 flex-1 items-center gap-2 truncate text-xs text-muted"><Loader2 className="size-3 animate-spin" />{job?.progress.label || "Starting…"}</p>
+            {job && <Button size="sm" variant="danger" icon={<Square className="size-3.5" />} loading={stopping} onClick={() => void stop()}>Stop</Button>}
+          </div>
           {(data?.logs ?? []).slice(-4).map((l) => <p key={l.id} className="truncate font-mono text-[11px] text-muted">{l.message}</p>)}
         </div>
       )}
@@ -179,7 +193,7 @@ export function FinderResults({ jobId, onClose, onQueued }: { jobId: string; onC
           <ul className="mt-1 space-y-1">{failedPages.slice(0, 20).map((p) => <li key={p.url}><span className="font-mono">{p.url}</span>: {p.error}</li>)}</ul>
         </details>
       )}
-      {job?.finished_at && <p className="mt-2 text-xs text-muted">Finished {timeAgo(job.finished_at)}. Every page and check is in this run&apos;s log on the Runs page.</p>}
+      {job?.finished_at && <p className="mt-2 text-xs text-muted">{job.status === "cancelled" ? `Stopped ${timeAgo(job.finished_at)}; ${files.length ? `the ${plural(files.length, "file")} found before that are listed above` : "no files were found before that"}.` : `Finished ${timeAgo(job.finished_at)}.`} Every page and check is in this run&apos;s log on the Runs page.</p>}
     </section>
   );
 }

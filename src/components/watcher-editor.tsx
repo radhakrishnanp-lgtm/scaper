@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle2, Crosshair, FlaskConical, Globe, Plus, Save, Trash2, XCircle, Zap } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Crosshair, FlaskConical, Globe, Plus, Save, Trash2, Wand2, XCircle, Zap } from "lucide-react";
 import { watcherSchema, defaultWatcherOptions, type Condition, type FetchMode, type NotifyChannels, type WatcherOptions, type WatchTarget } from "@/lib/schemas";
 import { api, ClientApiError, errorText } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
@@ -259,7 +259,7 @@ export function WatcherEditor({ id, initial }: { id?: string; initial: WatcherDr
             {!info.forcedMode && (
               <div>
                 <p className="mb-1.5 text-sm font-medium">Load with</p>
-                <Segmented label="Fetch mode" value={d.mode} onChange={(v) => set("mode", v)} options={[{ value: "browser", label: "Browser", icon: <Globe className="size-4" /> }, { value: "fast", label: "Fast", icon: <Zap className="size-4" /> }]} />
+                <Segmented label="Fetch mode" value={d.mode} onChange={(v) => set("mode", v)} options={[{ value: "auto", label: "Smart", icon: <Wand2 className="size-4" /> }, { value: "browser", label: "Browser", icon: <Globe className="size-4" /> }, { value: "fast", label: "Fast", icon: <Zap className="size-4" /> }]} />
               </div>
             )}
             {info.forcedMode && <p className="text-xs text-muted">Always loaded in {info.forcedMode === "fast" ? "fast HTTP" : "Browser"} mode.</p>}

@@ -9,7 +9,7 @@ import { Badge, Button, Callout, Card, CardHeader, Field, Input } from "@/compon
 import { api, errorText } from "@/lib/api-client";
 
 export type ServiceStatus = {
-  firecrawl: { configured: boolean; url: string; tasks: number };
+  firecrawl: { configured: boolean; url: string; tasks: number; dailyCredits: number; usage: { today: { calls: number; credits: number; byKind: Record<string, { calls: number; credits: number }> }; last30Days: { calls: number; credits: number } } };
   apify: { configured: boolean; maxChargeUsd: number; tasks: { id: string; name: string; actorId: string }[] };
 };
 
@@ -55,6 +55,17 @@ export function FirecrawlTab({ data, status, onSaved }: { data: SettingsResponse
             {(p) => <Input {...p} className="font-mono text-xs" value={s.v.firecrawlUrl} onChange={(e) => s.set({ firecrawlUrl: e.target.value })} />}
           </Field>
         </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Daily credit limit" hint="Scaper stops using Firecrawl for the day at this many credits. 0 means no limit.">
+            {(p) => <Input {...p} type="number" min={0} step={10} value={s.v.firecrawlDailyCredits} onChange={(e) => s.set({ firecrawlDailyCredits: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />}
+          </Field>
+          <div className="rounded-xl border border-border p-3 text-sm" aria-label="Firecrawl credits used">
+            <p className="font-medium">Credits used by Scaper</p>
+            <p className="mt-1 text-muted">Today <strong className="text-text tabular-nums">{status.firecrawl.usage.today.credits}</strong>{status.firecrawl.dailyCredits ? ` of ${status.firecrawl.dailyCredits}` : ""} in {status.firecrawl.usage.today.calls} call(s) · last 30 days <strong className="text-text tabular-nums">{status.firecrawl.usage.last30Days.credits}</strong></p>
+            {Object.keys(status.firecrawl.usage.today.byKind).length > 0 && <p className="mt-1 text-xs text-muted">{Object.entries(status.firecrawl.usage.today.byKind).map(([k, v]) => `${k} ${v.calls}× (${v.credits})`).join(" · ")}</p>}
+            <p className="mt-1 text-xs text-muted">Counted at Firecrawl&apos;s list prices; Test shows what your account really has left.</p>
+          </div>
+        </div>
         {ints.hasFirecrawlKey && <Button size="sm" variant="ghost" icon={<Trash2 className="size-4" />} onClick={() => void s.save({ firecrawlKey: "" })}>Remove the key</Button>}
       </Panel>
       <Card>
@@ -62,6 +73,7 @@ export function FirecrawlTab({ data, status, onSaved }: { data: SettingsResponse
         <ul className="list-disc space-y-1.5 px-9 pb-5 text-sm text-muted">
           <li><strong className="text-text">Tasks and quick scrapes:</strong> fetch mode Firecrawl, for pages that Fast mode cannot read and your own browser is too slow for.</li>
           <li><strong className="text-text">AI agent and bots:</strong> <code>web_search</code> to find pages, <code>firecrawl_scrape</code> to read one, <code>firecrawl_map</code> to list a site&apos;s pages.</li>
+          <li><strong className="text-text">Smart mode saves credits:</strong> Scaper loads the page for free first (Fast, then its own browser) and only asks Firecrawl when that fails or comes back empty. Your AI does the same: it finds file links with one <code>firecrawl_map</code> call (1 credit for a whole site) instead of opening every page.</li>
           <li><strong className="text-text">Same rules:</strong> Scaper still checks robots.txt and your site rules before each page, and never asks Firecrawl for stealth proxies.</li>
         </ul>
       </Card>

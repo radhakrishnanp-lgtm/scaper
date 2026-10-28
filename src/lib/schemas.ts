@@ -19,7 +19,9 @@ export const urlSchema = z
   }, "Enter a valid http(s) URL");
 
 // "firecrawl": the page is loaded by your Firecrawl account and read here like any other page (your selectors, your AI).
-export const fetchModeSchema = z.enum(["browser", "fast", "firecrawl"]);
+// "auto": smart and cheap. Fast first, Scaper's browser when the page needs JavaScript, and Firecrawl (credits) only
+// when both fail for a technical reason or come back empty. A site that blocks bots is never retried through Firecrawl.
+export const fetchModeSchema = z.enum(["browser", "fast", "firecrawl", "auto"]);
 export type FetchMode = z.infer<typeof fetchModeSchema>;
 
 const selector = z.string().trim().min(1, "Selector is required").max(500);
@@ -716,6 +718,8 @@ export const integrationSettingsSchema = z.object({
   // Firecrawl (firecrawl.dev or your own server): loads pages and searches the web with your key. Your LLM reads the result.
   firecrawlKey: z.string().trim().max(300).default(""),
   firecrawlUrl: z.string().trim().max(300).regex(/^https?:\/\/\S+$/i, "Start with http:// or https://").default("https://api.firecrawl.dev"),
+  // Most Firecrawl credits Scaper may use in one day (0 = no limit). Each call is counted at Firecrawl's list price.
+  firecrawlDailyCredits: z.number().int().min(0).max(1_000_000).default(0),
   // Apify: run actors from the Apify Store (YouTube, Instagram, TikTok …) on your account.
   apifyToken: z.string().trim().max(300).default(""),
   // A safety cap for any one actor run started by the agent or a bot (US dollars, pay-per-result actors).
@@ -858,9 +862,14 @@ export const fileFinderSchema = z.object({
   extensions: z.array(z.string().trim().toLowerCase().regex(/^[a-z0-9]{1,8}$/, "Use letters and digits, like srt")).max(20).default([]),
   /** What to look for, in your words, for your AI or Firecrawl's. */
   instruction: z.string().trim().max(2000).default(""),
-  /** Who picks the links: Scaper's rules, your AI, or Firecrawl's AI (needs a Firecrawl key). */
-  picker: z.enum(["rules", "ai", "firecrawl"]).default("rules"),
-  mode: fetchModeSchema.default("fast"),
+  /**
+   * Who picks the links: Scaper's rules, your AI, Firecrawl's AI (needs a Firecrawl key), or auto: the rules first,
+   * and your AI only on pages where the rules found nothing (fewest AI calls).
+   */
+  picker: z.enum(["rules", "ai", "firecrawl", "auto"]).default("rules"),
+  mode: fetchModeSchema.default("auto"),
+  /** Before opening pages, ask Firecrawl for every link on the site (one call, about 1 credit) and keep the file links. */
+  siteMap: z.boolean().default(false),
   /** Link hops from the start page to the file: 1 = the file is on a page the list links to. */
   depth: z.number().int().min(0).max(3).default(1),
   followNext: z.boolean().default(true),
@@ -881,6 +890,8 @@ export const assistantRequestSchema = z.object({
   model: z.enum(["main", "fast"]).default("main"),
   /** The page you are on, like /tasks/abc. */
   page: z.string().trim().max(300).default("/"),
+  /** A focused chat about one data set, task, watcher or product. */
+  session: z.object({ key: z.string().trim().max(200), name: z.string().trim().max(200) }).optional(),
   /** Rows you selected in a data table. */
   rows: z.object({
     source: z.string().trim().max(300).default(""),

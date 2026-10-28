@@ -176,7 +176,8 @@ export async function runTask(input: TaskRunInput, hooks: RunHooks = {}): Promis
   const o = input.options ?? defaultTaskOptions();
   const started = Date.now();
   const log = hooks.log ?? (() => undefined);
-  const browser = input.mode === "browser";
+  // Smart mode becomes Browser mode when the task clicks or scrolls; otherwise it picks the cheapest way per page.
+  const browser = input.mode === "browser" || (input.mode === "auto" && (o.steps.length > 0 || ["click", "scroll", "loadMore"].includes(o.pagination.type)));
   const pagination = o.pagination;
   const browserPagination = browser && ["click", "scroll", "loadMore"].includes(pagination.type) ? pagination : undefined;
   if (!browser && ["click", "scroll", "loadMore"].includes(pagination.type)) log("warn", "This pagination type needs Browser mode, so it was skipped.");

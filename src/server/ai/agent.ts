@@ -49,6 +49,23 @@ function scaperSnapshot() {
   ].join("; ");
 }
 
+/**
+ * How to use the user's Firecrawl key without wasting credits; you choose the way. Only when a key is saved.
+ * Shared by the agent, the assistant on every page and bots.
+ */
+function firecrawlPlaybook() {
+  const i = getSettings().integrations;
+  if (!i.firecrawlKey) return "";
+  const cap = i.firecrawlDailyCredits ? ` The user's daily limit is ${i.firecrawlDailyCredits} credits (firecrawl_usage shows what is left).` : "";
+  return `Firecrawl (the user's key, paid credits; you decide when it is worth it):${cap}
+- Free first: read_page, extract_*, find_files (mode auto) and download_files cost nothing. Use Firecrawl only when a free way failed, came back empty, or the user asks.
+- To see a whole site or find its file links: one firecrawl_map call (about 1 credit for up to 500 links), then keep links by file ending or open only the pages you need. For downloads, find_files with site_map=true does this.
+- To read one hard page: firecrawl_scrape (1 credit). Never loop it over many pages; find_files, tasks and smart mode (mode auto) handle many pages for free and call Firecrawl only where needed.
+- find_files picker firecrawl costs about 5 credits per page: only when the user asks or nothing else found the links.
+- A site that blocks Scaper (bot check, 403, 429, robots.txt) is not retried through Firecrawl.
+- Before a job that may use more than about 20 credits, say the estimate and ask.`;
+}
+
 /** The system prompt: rules, the user's own instructions and memory, the date, and what is in Scaper right now. */
 export function buildSystemPrompt(opts: { private: boolean; approval: "ask" | "auto"; team?: boolean }) {
   const ai = getSettings().ai;
@@ -62,6 +79,7 @@ export function buildSystemPrompt(opts: { private: boolean; approval: "ask" | "a
     memory ? `What you know about the user (memory):\n${memory}` : "",
     `In Scaper right now: ${scaperSnapshot()}.`,
     guideSummary(),
+    firecrawlPlaybook(),
     opts.approval === "ask" ? "Actions that change things wait for the user's OK automatically; just call the tool." : "The user allowed you to make changes without asking; still only do what they asked for.",
     opts.private ? "This conversation is private: nothing is saved to disk. Do not use remember. Helper agents are not available in private conversations." : "",
     !opts.private && ai.team.enabled && opts.team !== false ? TEAM_PROMPT(ai.team.maxAgents) : "",
